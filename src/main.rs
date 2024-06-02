@@ -861,6 +861,7 @@ impl Engine {
     }
     
     fn add_reg_const(&mut self, dest: &str, constant: u16) {
+        
         let dest_value = self.registers[get_register(dest)].value;
         match dest.chars().last() {
             Some('X') => self.registers[get_register(dest)].load_word(dest_value.wrapping_add(constant)),
