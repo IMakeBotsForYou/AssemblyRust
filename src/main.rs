@@ -560,8 +560,10 @@ impl MemoryManager {
 
     fn check_memory_address(&self, mem_address: usize) -> Result<(), ErrorCode> {
         if mem_address >= self.memory.len() {
-            Err(ErrorCode::InvalidPointer("{mem_address} is not a valid memory address".to_string()))
-        } else {
+            Err(ErrorCode::InvalidPointer(format!(
+                "{} is not a valid memory address", mem_address
+            )))
+            } else {
             Ok(())
         }
     }
@@ -614,7 +616,10 @@ impl MemoryManager {
             return Ok(start_index);
         }
         
-        Err(ErrorCode::NotEnoughSpace("Not enough contiguous free memory".to_string()))
+        Err(ErrorCode::NotEnoughSpace(
+            format!("Not enough contiguous free memory to store byte array of length {}", length)
+            .to_string())
+        )
     }
 
     fn is_valid_array(&self, text: &str) -> Option<Vec<u8>> {
@@ -841,7 +846,10 @@ impl Engine {
         } else {
             
             if value > 127 {
-                return Err(ErrorCode::InvalidValue("Single byte value can't be over 127".to_string()));
+                return Err(ErrorCode::InvalidValue(
+                        format!("Single byte value can't be over 127. Attempted value is {}", value)
+                        .to_string()
+                    ));
             }
 
             let byte_value = self.memory_manager.memory[dest];
