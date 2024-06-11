@@ -1,5 +1,6 @@
-array dw, '11', '$' ; some random shit
-message db, 'Hello world', '$'; define message as byte array
-
-lea AX, [message]  ; Load address of msg into AX
-print AX
+thing db, 5
+label:
+   print thing
+   sub [thing], 1
+   cmp [thing], 0
+   jne label
