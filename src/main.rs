@@ -86,6 +86,10 @@ enum Command {
     mul <const>
     mul <var>
     */
+    Imul,
+    /*
+    ditto
+     */
     Div,
     /*
     Syntax
@@ -94,6 +98,10 @@ enum Command {
     div <var>
     div <const>
     */
+    Idiv,
+    /*
+    ditto
+     */
     And,
     /*
     Syntax
@@ -274,18 +282,35 @@ Syntax:
                 "The 'mul' command multiplies the operand by the accumulator.
 Syntax:
     mul <reg>
-    mul <mem>
+    mul <b/w> <mem>
     mul <const>
     mul <var>".to_string()
+            },
+            Command::Imul => {
+                "The 'imul' command multiplies the operand by the accumulator, using signed integer parsing.
+Syntax:
+    imul <reg>
+    imul <b/w> <mem>
+    imul <const>
+    imul <var>".to_string()
             },
             Command::Div => {
                 "The 'div' command divides the accumulator by the operand.
 Syntax:
     div <reg>
-    div <mem>
+    div <b/w> <mem>
     div <var>
     div <const>".to_string()
             },
+            Command::Idiv => {
+                "The 'idiv' command divides the accumulator by the operand.
+Syntax:
+    idiv <reg>
+    idiv <b/w> <mem>
+    idiv <var>
+    idiv <const>".to_string()
+            },
+            
             Command::And => {
                 "The 'and' command performs a bitwise AND operation.
 Syntax:
@@ -454,6 +479,8 @@ pub enum ErrorCode {
     StackUnderflow,
     InvalidOpcode,
     UnknownVariable,
+    Overflow,
+    InvalidRegister,
     InvalidPointer(String),
     NotEnoughSpace(String),
     InvalidValue(String),
@@ -468,7 +495,7 @@ pub enum Status {
 
 #[derive(Debug, Clone, Copy)]
 enum Flag {
-    // Carry = 0b0001,        // Carry Flag
+    Carry = 0b0001,        // Carry Flag
     Parity = 0b0010,       // Parity Flag
     // AuxiliaryCarry = 0b0100, // Auxiliary Carry Flag
     Zero = 0b1000,         // Zero Flag
@@ -568,7 +595,7 @@ impl MemoryManager {
         }
     }
 
-    fn save_variable(&mut self, variable_name: String, data: &[u8], stack_pointer: usize) -> Result<(), String> {
+    fn save_variable(&mut self, variable_name: String, data: &[u8], stack_pointer: usize) -> Result<(), ErrorCode> {
         let length = data.len();
         if let Ok(location) = self.find_free_block(length, stack_pointer) {
             // Copy data to the found location
@@ -584,7 +611,9 @@ impl MemoryManager {
             });
             Ok(())
         } else {
-            Err("Not enough contiguous free memory".to_string())
+            Err(ErrorCode::NotEnoughSpace(
+                format!("Not enough contiguous free memory to store variable of length {}", length)
+            ))
         }
     }
 
@@ -622,7 +651,7 @@ impl MemoryManager {
         )
     }
 
-    fn is_valid_array(&self, text: &str) -> Option<Vec<u8>> {
+    fn is_valid_array(&self, text: &str) -> Result<Vec<u8>, ErrorCode> {
     // Adjust the regex pattern to correctly capture hexadecimal, binary, and decimal numbers
     let variable_pattern = Regex::new(r"^\[((?:&0x[0-9a-fA-F]+|&0b[01]+|\d+)(?:,(?:&0x[0-9a-fA-F]+|&0b[01]+|\d+))+)\]$").unwrap();
     if let Some(captures) = variable_pattern.captures(text) {
@@ -637,25 +666,31 @@ impl MemoryManager {
                     if let Ok(value) = u8::from_str_radix(&element[3..], 16) {
                         result.push(value);
                     } else {
-                        return None;
+                        return Err(ErrorCode::InvalidValue(
+                            format!("Could not parse {} as u8 value", &element)
+                        ));
                     }
                 } else if element.starts_with("&0b") {
                     if let Ok(value) = u8::from_str_radix(&element[3..], 2) {
                         result.push(value);
                     } else {
-                        return None;
+                        return Err(ErrorCode::InvalidValue(
+                            format!("Could not parse {} as u8 value", &element)
+                        ));
                     }
                 } else if let Ok(value) = element.parse::<u8>() {
                     result.push(value);
                 } else {
-                    return None;
+                    return Err(ErrorCode::InvalidValue(
+                        format!("Could not parse \"{}\" as u8 value", &element)
+                    ));
                 }
             }
             
-            return Some(result);
+            return Ok(result);
         }
     }
-    None
+    Err(ErrorCode::InvalidValue("Could not find array string".to_string()))
     }
 
     fn is_valid_variable_name(&self, text: &str) -> bool {
@@ -672,56 +707,97 @@ impl MemoryManager {
         operand.starts_with('[') && operand.ends_with(']')
     }
 
-    fn get_register_value(&self, registers: &[Register; 8], name: &str) -> u16 {
+    fn get_register_value(&self, registers: &[Register; 8], name: &str) -> Option<u16> {
         let value = registers[get_register(name)].value;
 
         match name {
-            "AL"  | "BL"  | "CL" | "DL" => value & 0x00FF,
-            "AH"  | "BH"  | "CH" | "DH" => value >> 8,
-            "AX"  | "BX"  | "CX" | "DX" | "ESI" | "EDI" | "IP" | "FLAG" => value,
-            _ => panic!("Invalid register."),
+            "AL"  | "BL"  | "CL" | "DL" => Some(value & 0x00FF),
+            "AH"  | "BH"  | "CH" | "DH" => Some(value >> 8),
+            "AX"  | "BX"  | "CX" | "DX" | "ESI" | "EDI" | "IP" | "FLAG" => Some(value),
+            _ => None,
         }
     }
 
     fn calculate_effective_address(&self, mem_operand: &str, registers: &[Register; 8]) -> Result<usize, ErrorCode> {
-        // Remove the square brackets
+        // Ensure the memory operand is valid and remove the square brackets
         if !self.is_memory_operand(mem_operand) {
             return Err(ErrorCode::InvalidPointer("Memory Operand must be enveloped in []".to_string()));
         }
         let addr_expression = &mem_operand[1..mem_operand.len() - 1];
-        
+    
         let mut effective_address = 0;
-        
-        for part in addr_expression.split('+') {
+    
+        // Split the address expression into parts and process each part
+        for part in addr_expression.split(|c| c == '+' || c == '-') {
             let part = part.trim();
+            //allow spaces                                                                          don't underflow
+            let is_negative = addr_expression.chars().nth(addr_expression.find(part).unwrap().saturating_sub(1)) == Some('-');
             
+            // Process parts containing multiplication (index * scale)
             if part.contains('*') {
-                let mut iter = part.split('*');
-                let scale_str = iter.next().unwrap().trim();
-                let reg = iter.next().unwrap().trim();
-                
-                if let Some(scale) = parse_value_to_usize(scale_str) {
-                    effective_address += scale * self.get_register_value(registers, reg) as usize;
+
+                let mut components = part.split('*').map(|s| s.trim());
+                let index_part = components.next().ok_or(ErrorCode::InvalidPointer("Invalid Addressing Mode.".to_string()))?;
+                let scale_part = components.next().ok_or(ErrorCode::InvalidPointer("Invalid Addressing Mode.".to_string()))?;
+    
+                // Get the index value from registers or as a direct value
+                let index_value = if let Some(v) = self.get_register_value(registers, index_part) {
+                    v as usize
                 } else {
-                    return Err(ErrorCode::InvalidPointer("Invalid scale value".to_string()));
-                }
-                
+                    parse_value_to_usize(index_part).ok_or(ErrorCode::InvalidRegister)?
+                };
+    
+                // Parse the scale value
+                let scale_value = parse_value_to_usize(scale_part).ok_or(
+                    ErrorCode::InvalidValue(
+                        format!("Invalid scale factor: {scale_part}")
+                    ))?;
+    
+                // Adjust the effective address based on the scale and sign
+                effective_address += if is_negative {
+                    - ((index_value * scale_value) as isize)
+                } else {
+                    (index_value * scale_value) as isize
+                };
+    
+            // Handle displacement, hexadecimal values, or variable names
             } else if let Some(value) = parse_value_to_usize(part) {
-                // Handle displacement or hexadecimal values
-                effective_address += value;
-                
+                // Adjust the effective address based on the value and sign
+                effective_address += if is_negative {
+                    -(value as isize)
+                } else {
+                    value as isize
+                };
+    
             } else if let Some(var_metadata) = self.variable_pointers.get(part) {
-                // Handle variable name as a pointer
-                effective_address += var_metadata.start_index;
-                
+                // Handle variable name as a pointer and adjust the effective address based on the sign
+                effective_address += if is_negative {
+                    -(var_metadata.start_index as isize)
+                } else {
+                    var_metadata.start_index as isize
+                };
+    
+            // Handle base register and adjust the effective address based on the sign
+            } else if let Some(v) = self.get_register_value(registers, part) {
+                effective_address += if is_negative {
+                    -(v as isize)
+                } else {
+                    v as isize
+                };
+    
             } else {
-                // Handle base register
-                effective_address += self.get_register_value(registers, part) as usize;
+                return Err(ErrorCode::InvalidRegister);
             }
+        }
+    
+        // Ensure the effective address is positive and cast to usize
+        if effective_address < 0 {
+            return Err(ErrorCode::InvalidPointer("Pointer address cannot be less than 0.".to_string()));
         }
     
         Ok(effective_address as usize)
     }
+    
 
     fn _fetch_memory(&self, start_index: usize, length: usize) -> Vec<u8>{
         self.memory[start_index..start_index+length].to_vec()
@@ -773,7 +849,7 @@ fn get_register(name: &str) -> usize{
         "EDI" => 5,
         "IP" => 6,   
         "FLAG" => 7,   
-        _ => panic!("Invalid register name"),
+        _ => panic!("Invalid register name: {}", name),
     }
 }
 
@@ -1181,105 +1257,153 @@ impl Engine {
                 // mov BX, 0x5678  ; Load 0x5678 into BX
                 // mul BX          ; Multiply AX by BX, result is stored in DX:AX
 
-                ["mul", reg_src] if self.is_valid_register(*reg_src) => {
+                [op @ ("mul" | "imul"), reg_src] if self.is_valid_register(*reg_src) => {
                     // source register
-                    self.mul_reg(*reg_src);
+                    self.mul_reg(*reg_src, *op == "imul");
                 },
 
-                ["mul", mem_address] if self.memory_manager.is_memory_operand(mem_address) => {
+                [op @ ("mul" | "imul"), size @ ("b" | "w"), mem_address] if self.memory_manager.is_memory_operand(mem_address) => {
                     // source is mem operand i.e. [...]
                     if let Ok(parsed_address) = self.memory_manager.calculate_effective_address(mem_address, &self.registers) {
-                        self.mul_mem(parsed_address);
+                        if let Err(error) = self.mul_mem(parsed_address, *size=="w", *op == "imul") {
+                            return Err(error);
+                        }
                     } else {
                          println!("[WARNING] [{ip}] Something went wrong.");
                     }
                 },
 
-                ["mul", constant] if parse_value_to_usize(*constant).is_some() => {
-                    // source is an immediate value
-                    if let Some(value) = parse_value_to_usize(*constant) {
-                        let word = {
-                            value > u8::MAX.into()
-                        };
-                        self.mul_const(value as u16, word);
-                    } else {
-                        println!("[WARNING] [{ip}] Something went wrong.");
-                    }
-                },
-
-                ["mul", variable] if self.get_variable_metadata(*variable).is_some() => {
-                    if let Some(metadata) = self.get_variable_metadata(*variable) {
-                        self.mul_const(metadata.start_index as u16, metadata.length > 1);
-                    } else {
-                         println!("[WARNING] [{ip}] Something went wrong.");
-                    }
-                },
-
-                ["mul", _rest @ ..] => {
-                    println!("{}", Command::get_help_string(Command::Mul));
-                },
-                // // DIV Instructions
-                // ["div", reg_dst, reg_src] if self.both_valid_reg(*reg_dst, *reg_src) => {
-                //     self.div_reg_reg(reg_dst, reg_src);
-                // },
-                // ["div", reg_dst, mem_address] if self.memory_manager.is_memory_operand(mem_address) => {
-                //     if let Ok(parsed_address) = self.memory_manager.calculate_effective_address(mem_address, &self.registers) {
-                //         self.div_reg_mem(reg_dst, parsed_address);
-                //     }
-                // },
-                // ["div", mem_address, reg_src] if self.memory_manager.is_memory_operand(mem_address) => {
-                //     if let Ok(parsed_address) = self.memory_manager.calculate_effective_address(mem_address, &self.registers) {
-                //         self.div_mem_reg(parsed_address, reg_src);
-                //     }
-                // },
-                // ["div", reg, constant] if self.is_valid_register(*reg) && parse_value_to_usize(*constant).is_some() => {
+                // [op @ ("mul" | "imul"), constant] if parse_value_to_usize(*constant).is_some() => {
+                //     // source is an immediate value
+                //     let signed = *op == "imul";
                 //     if let Some(value) = parse_value_to_usize(*constant) {
-                //         self.div_reg_const(reg, value as u16);
+                //         self.mul_const(value as u16, true, signed);
+                //     } else {
+                //         println!("[WARNING] [{ip}] Something went wrong.");
                 //     }
                 // },
-                // ["div", reg, variable] if self.is_valid_register(*reg) && self.get_variable(*variable).is_some() => {
-                //     if let Some(_) = self.get_variable(*variable) {
-                //         self.div_reg_variable(reg, variable);
-                //     }
-                // },
-                ["div", _rest @ ..] => {
-                    println!("{}", Command::get_help_string(Command::Div));
+
+                [op @ ("mul" | "imul"), variable] if self.get_variable_metadata(*variable).is_some() => {
+                    let signed = *op == "imul";
+                    if let Some(metadata) = self.get_variable_metadata(*variable) {
+                        if let Err(error) = self.mul_mem(metadata.start_index, metadata.length > 1, signed) {
+                            return Err(error);
+                        }
+                    } else {
+                         println!("[WARNING] [{ip}] Something went wrong.");
+                    }
                 },
 
-                ["print", mem_address] if self.memory_manager.is_memory_operand(mem_address) => {
+                [op @ ("mul" | "imul"), _rest @ ..] => {
+                    let signed = *op == "imul";
+                    if signed {
+                        println!("{}", Command::get_help_string(Command::Imul));
+                    } else {
+                        println!("{}", Command::get_help_string(Command::Mul));
+                    }
+                },
+
+
+                // // DIV Instructions
+
+                [op @ ("div" | "idiv"), reg_src] if self.is_valid_register(*reg_src) => {
+                    // source register
+                    if let Err(error) = self.div_reg(*reg_src, *op == "idiv") {
+                        return Err(error);
+                    }
+                },
+
+                [op @ ("div" | "idiv"), size @ ("b" | "w"), mem_address] if self.memory_manager.is_memory_operand(mem_address) => {
+                    // source is mem operand i.e. [...]
+                    if let Ok(parsed_address) = self.memory_manager.calculate_effective_address(mem_address, &self.registers) {
+                        if let Err(error) = self.div_mem(parsed_address, *size=="w", *op == "idiv"){
+                            return Err(error);
+                        }
+                    } else {
+                         println!("[WARNING] [{ip}] Something went wrong.");
+                    }
+                },
+
+                // [op @ ("div" | "idiv"), constant] if parse_value_to_usize(*constant).is_some() => {
+                //     // source is an immediate value
+                //     let signed = *op == "idiv";
+                //     if let Some(value) = parse_value_to_usize(*constant) {
+                //         self.div_const(value as u16, true, signed);
+                //     } else {
+                //         println!("[WARNING] [{ip}] Something went wrong.");
+                //     }
+                // },
+
+                [op @ ("div" | "idiv"), variable] if self.get_variable_metadata(*variable).is_some() => {
+                    let signed = *op == "idiv";
+                    if let Some(metadata) = self.get_variable_metadata(*variable) {
+                        if let Err(error) = self.div_const(metadata.start_index as u16, metadata.length > 1, signed){
+                            return Err(error);
+                        }
+                    } else {
+                         println!("[WARNING] [{ip}] Something went wrong.");
+                    }
+                },
+
+                
+                [op @ ("div" | "idiv"), _rest @ ..] => {
+                    let signed = *op == "idiv";
+                    if signed {
+                        println!("{}", Command::get_help_string(Command::Idiv));
+                    } else {
+                        println!("{}", Command::get_help_string(Command::Div));
+                    }
+                },
+                [op @ ("print" | "iprint"), reg] if self.is_valid_register(*reg) => {
+                    if *op == "print"{
+                        println!("\n[PRINT] [{ip}]: {0}\n", self.get_register_value(*reg));
+                    } else {
+                        println!("\n[PRINT] [{ip}]: {0}\n", self.get_register_value(*reg) as i8);
+                    }
+                },
+                [op @ ("print" | "iprint"), mem_address] => { // if self.memory_manager.is_memory_operand(mem_address) => {
+                    
                     if let Ok(parsed_address) = self.memory_manager.calculate_effective_address(mem_address, &self.registers) {
                         if let Err(error) = self.memory_manager.check_memory_address(parsed_address) {
                             self.halt();
                             return Err(error);
                         }
                         let ip = self.registers[get_register("IP")].value;
-                        println!("\n[PRINT] [{ip}]: {0}\n", self.memory_manager.memory[parsed_address]);
+
+                        if *op == "print" {
+                            println!("\n[PRINT] [{ip}]: {0}\n", self.memory_manager.memory[parsed_address]);
+                        } else {
+                            println!("\n[PRINT] [{ip}]: {0}\n", self.memory_manager.memory[parsed_address] as i8);
+                        }
                     }
                 },
-                ["print", number, mem_address] if self.memory_manager.is_memory_operand(mem_address) && parse_value_to_usize(*number).is_some() => {
+                [op @ ("print" | "iprint"), number, mem_address]  => { //if self.memory_manager.is_memory_operand(mem_address) &&
+                                                                                            //parse_value_to_usize(*number).is_some() => {
                     if let Ok(parsed_address) = self.memory_manager.calculate_effective_address(mem_address, &self.registers) {
-
                         if let Some(value) = parse_value_to_usize(*number) {
-                           
+                    
                             if let Err(error) = self.memory_manager.check_memory_address(parsed_address+value) {
                                 self.halt();
                                 return Err(error);
                             }
 
                             let ip = self.registers[get_register("IP")].value;
-                            print!("[PRINT] [{ip}]: ");
+                            print!("[PRINT] [{ip}]: [");
                             for i in 0..value {
-                                print!("{0} ", self.memory_manager.memory[parsed_address+i]);
+                                if *op == "print" {
+                                    print!("{0} ", self.memory_manager.memory[parsed_address+i]);
+                                } else {
+                                    print!("{0} ", self.memory_manager.memory[parsed_address+i] as i8);
+                                }
                             }
-                            println!("");
-                        } else {
-                            println!("[WARNING] [{ip}] Something went wrong.");
+                            println!("]");
                         }
                     }
                 },
-                ["let", variable_name, constant] if self.memory_manager.is_valid_variable_name(variable_name) &&
-                (parse_value_to_usize(*constant).is_some() || self.memory_manager.is_valid_array(*constant).is_some() )=> {
-                    if let Some(value) = parse_value_to_usize(*constant) {
+                ["let", variable_name, data] if self.memory_manager.is_valid_variable_name(variable_name) => {
+                // (parse_value_to_usize(*data).is_some() || self.memory_manager.is_valid_array(*data).is_ok() )=> {
+                    
+                    if let Some(value) = parse_value_to_usize(*data) {
                         let bytes = {
                             if value > u8::MAX.into() {
                                 let low_byte = (value & 0x00FF) as u8;
@@ -1289,12 +1413,25 @@ impl Engine {
                                 vec![value as u8]
                             }
                         };
-                        self.memory_manager.save_variable(variable_name.to_string(), &bytes, self.stack_pointer)
-                        .unwrap_or_else(|err| eprintln!("Error saving variable: {}", err));
+                        if let Err(error) = self.memory_manager.save_variable(
+                                                        variable_name.to_string(), 
+                                                        &bytes, 
+                                                        self.stack_pointer){
+                            return Err(error);
+                        }
 
-                    } else if let Some(array) = self.memory_manager.is_valid_array(*constant) {
-                        self.memory_manager.save_variable(variable_name.to_string(), &array, self.stack_pointer)
-                            .unwrap_or_else(|err| eprintln!("Error saving variable: {}", err));
+                    } else {
+                        match self.memory_manager.is_valid_array(*data) {
+                            Ok(array) => {
+                                if let Err(error) = self.memory_manager.save_variable(
+                                                            variable_name.to_string(),
+                                                            &array,
+                                                            self.stack_pointer) {
+                                return Err(error);
+                                }
+                            },
+                            Err(error) => return Err(error)
+                        }
                     }
                 },
                 []|["NOP"] => {},
@@ -1309,7 +1446,7 @@ impl Engine {
             // self.get_register("IP").value += 1;
             ip = self.registers[6].value as usize;
         }
-        print!("[");
+        // print!("[");
         // for i in 0..10 {
         //     print!("{}", self.memory_manager.memory[i]);
         //     if i < 9 {
@@ -1599,7 +1736,7 @@ impl Engine {
         let dest_value = self.registers[get_register(dest)].value;
         let (result, overflowed) = match dest.chars().last() {
             Some('X') | Some('I') => {
-                let (value, overflowed) = self.registers[get_register(dest)].value.overflowing_sub(dest_value.wrapping_sub(constant));
+                let (value, overflowed) = dest_value.overflowing_sub(constant);
                 self.registers[get_register(dest)].load_word(value);
                 (value, overflowed)
             }
@@ -1615,20 +1752,6 @@ impl Engine {
         self.set_flags(result, overflowed);
     }
 
-    //////////// MUL ////////////
-    // Multiply the value in the source register by the value in AX register.
-    fn mul_reg(&mut self, reg_src: &str) {
-        let src_value = self.get_register_value(reg_src);
-        let ax_value = self.get_register_value("AX");
-
-        // Check the size of the source register.
-        if get_register_size(reg_src) == Some(8) {
-            self.mul_8bit(ax_value, src_value);
-        } else {
-            self.mul_16bit(ax_value, src_value);
-        }
-    }
-
     fn set_register_value(&mut self, register: &str, value: u16) {
         match get_register_size(register) {
             Some(8) => self.registers[get_register(register)].load_byte(value.try_into().unwrap(), register.ends_with('H')),
@@ -1637,52 +1760,235 @@ impl Engine {
             _ => panic!("Invalid size."),
         }
     }
+
+    fn set_flag(&mut self, flag: Flag, value: bool) {
+        if value {
+            self.registers[get_register("FLAG")].value |= flag.value();
+        } else {
+            self.registers[get_register("FLAG")].value &= !flag.value();
+        }
+    }
+
+    //////////// MUL ////////////
+    // Multiply the value in the source register by the value in AX register.
+    fn mul_reg(&mut self, reg_src: &str, signed: bool) {
+        let src_value = self.get_register_value(reg_src);
+        // Check the size of the source register.
+        if get_register_size(reg_src) == Some(8) {
+            self.mul_8bit(src_value, signed);
+        } else {
+            self.mul_16bit(src_value, signed);
+        }
+    }
+
     // Helper function to multiply 8-bit values and store the result in AX register.
-    fn mul_8bit(&mut self, ax_value: u16, src_value: u16) {
-        let al_value = ax_value & 0x00FF;
-        let result = al_value * (src_value & 0x00FF);
+    fn mul_8bit(&mut self, src_value: u16, signed: bool) {
+        // Get the current value of the AX register
+        let ax_value = self.get_register_value("AX");
+
+        // Extract the lower 8 bits of AX (AL) and convert to signed 8-bit value
+        let al_value = ax_value as i8;
+        let src_value = src_value as i8;
+
+        // Perform multiplication based on signed or unsigned interpretation
+        let result = if signed {
+            (al_value as i16 * src_value as i16) as u16
+        } else {
+            (ax_value & 0x00FF) as u16 * (src_value as u16 & 0x00FF) as u16
+        };
+
+        // Determine overflow condition based on the upper nibble of the result
+        let overflow_condition = result >> 4 != 0;
+
+        self.set_flag(Flag::Carry, overflow_condition);
+        self.set_flag(Flag::Overflow, overflow_condition);
         self.set_register_value("AX", result as u16);
     }
 
-    // Helper function to multiply 16-bit values and store the result in AX and DX registers.
-    fn mul_16bit(&mut self, ax_value: u16, src_value: u16) {
-        let result = ax_value as u32 * src_value as u32;
+
+    fn mul_16bit(&mut self, src_value: u16, signed: bool) {
+        // Get the current value of the AX register
+        let ax_value = self.get_register_value("AX");
+    
+        // Perform multiplication based on signed or unsigned interpretation
+        let result = if signed {
+            // Signed multiplication
+            let result = (ax_value as i32).checked_mul(src_value as i32).expect("Overflow error");
+            result as u32
+        } else {
+            // Unsigned multiplication
+            (ax_value as u32).checked_mul(src_value as u32).expect("Overflow error")
+        };
+        
+        // Store the lower 16 bits of the result in AX
         self.set_register_value("AX", (result & 0xFFFF) as u16);
+        // Store the upper 16 bits of the result in DX
         self.set_register_value("DX", ((result >> 16) & 0xFFFF) as u16);
+    
+        // Determine overflow condition
+        let dx_value = (result >> 16) & 0xFFFF;
+        let overflow_condition = dx_value != 0;
+        self.set_flag(Flag::Overflow, overflow_condition);
+        self.set_flag(Flag::Carry, overflow_condition);
     }
 
     // Multiply the value at the specified memory address by the value in AL register.
-    fn mul_mem(&mut self, mem_address: usize) {
-        let mem_value = self.memory_manager.memory[mem_address] as u16;
-        let al_value = self.get_register_value("AL");
+    fn mul_mem(&mut self, mem_address: usize, word: bool, signed: bool) -> Result<(), ErrorCode>{
 
-        let result = al_value * mem_value;
-        self.set_register_value("AX", result as u16);
+        let (target_value, source_value) = if word {
+            if let Err(error) = self.memory_manager.check_memory_address(mem_address+1){
+                return Err(error);
+            }
+            let this_byte = self.memory_manager.memory[mem_address] as u16;
+            let next_byte = self.memory_manager.memory[mem_address+1] as u16;
+            let mem_value = this_byte << 8 | next_byte;
+            (self.get_register_value("AX"), mem_value)
+        } else {
+            let mem_value = self.memory_manager.memory[mem_address] as u16;
+            let al_value = self.get_register_value("AL");
+            (mem_value, al_value)
+        };
+
+
+        self.set_register_value("AX", target_value);
+        self.mul_const(source_value, word, signed);
+
+        Ok(())
     }
 
     // Multiply the specified constant value by the value in AX or AL register.
     // If `word` is true, use the 16-bit AX register, otherwise use the 8-bit AL register.
-    fn mul_const(&mut self, value: u16, word: bool) {
+    fn mul_const(&mut self, value: u16, word: bool, signed: bool) {
         if word {
-            self.mul_const_16bit(value);
+            self.mul_16bit(value, signed);
         } else {
-            self.mul_const_8bit(value);
+            self.mul_8bit(value, signed);
         }
     }
 
-    // Helper function to multiply a constant with the 16-bit AX register value.
-    fn mul_const_16bit(&mut self, value: u16) {
-        let ax_value = self.get_register_value("AX") as u32;
-        let result = ax_value * value as u32;
-        self.set_register_value("AX", (result & 0xFFFF) as u16);
-        self.set_register_value("DX", ((result >> 16) & 0xFFFF) as u16);
+
+
+    //////////// DIV ////////////
+    // Divide the value in the source register by the value in AX register.
+    fn div_reg(&mut self, reg_src: &str, signed: bool) -> Result<(), ErrorCode>{
+        let src_value = self.get_register_value(reg_src);
+        // Check the size of the source register.
+        if get_register_size(reg_src) == Some(8) {
+            self.div_8bit(src_value as u8, signed)
+        } else {
+            self.div_16bit(src_value, signed)
+        }
+    }
+    // ax / bl, ah = ax % bl
+    fn div_8bit(&mut self, src_value: u8, signed: bool) -> Result<(), ErrorCode>{
+        let ax_value = self.get_register_value("AX");
+        if src_value == 0 {
+            return Err(ErrorCode::DivisionByZero);
+        }
+        let (quotient, remainder) = if signed {
+            // Perform signed division
+            let al_signed = ax_value as i16;
+            let src_signed = src_value as i16;
+            let quotient = (al_signed / src_signed) as u16;
+            let remainder = (al_signed % src_signed) as u16;
+            (quotient, remainder)
+        } else {
+            // Perform unsigned division
+            let quotient = ax_value / src_value as u16;
+            let remainder = ax_value % src_value as u16;
+            (quotient, remainder)
+        };
+        self.set_register_value("AL", quotient as u16);
+        self.set_register_value("AH", remainder as u16);
+        Ok(())
     }
 
-    // Helper function to multiply a constant with the 8-bit AL register value.
-    fn mul_const_8bit(&mut self, value: u16) {
-        let al_value = self.get_register_value("AL");
-        let result = al_value * value;
-        self.set_register_value("AX", result);
+
+    // Helper function to divide 16-bit values and store the result in AX and DX registers.
+    fn div_16bit(&mut self, src_value: u16, signed: bool) -> Result<(), ErrorCode>{
+        let ax_value = self.get_register_value("AX");
+        if src_value == 0 {
+            return Err(ErrorCode::DivisionByZero);
+        }
+        let (quotient_maybe, remainder) = if signed {
+            // Perform signed division
+            let al_signed = ax_value as i16;
+            let src_signed = src_value as i16;
+            let quotient = (al_signed as u16).checked_div(src_signed as u16);
+            let remainder = (al_signed % src_signed) as u16;
+            (quotient, remainder)
+        } else {
+            // Perform unsigned division
+            let quotient = ax_value.checked_div(src_value);
+            let remainder = ax_value % src_value;
+
+
+            (quotient, remainder)
+        };
+        if quotient_maybe.is_none() {
+            return Err(ErrorCode::Overflow);
+        }
+
+        let quotient = quotient_maybe.expect("Some error occurred during unwrapping of quotient");
+
+        // Check for quotient overflow
+        if quotient > u16::MAX {
+            return Err(ErrorCode::Overflow);
+        }
+
+
+        self.set_register_value("AX", quotient);
+        self.set_register_value("DX", remainder);
+
+        // if signed {
+        //     // Check if the result fits in the lower half (AX) without overflow
+        //     let result_sign_extend = ((quotient as i16) >> 8) == (quotient as i16);
+        //     let overflow_condition = !result_sign_extend;
+        //     self.set_flag(Flag::Overflow, overflow_condition);
+        //     self.set_flag(Flag::Carry, overflow_condition);
+        // } else {
+        //     // Check if the upper half (DX) is zero
+        //     self.set_flag(Flag::Overflow, dx_value != 0);
+        //     self.set_flag(Flag::Carry, dx_value != 0);
+        // }
+
+        Ok(())
+    }
+
+    // Divide the value at the specified memory address by the value in AL register.
+    fn div_mem(&mut self, mem_address: usize, word: bool, signed: bool) -> Result<(), ErrorCode> {
+        if let Err(error) = self.memory_manager.check_memory_address(mem_address) {
+            return Err(error);
+        }
+        let (target_value, source_value) = if word {
+            if let Err(error) = self.memory_manager.check_memory_address(mem_address+1) {
+                return Err(error);
+            }
+            let this_byte = self.memory_manager.memory[mem_address] as u16;
+            let next_byte = self.memory_manager.memory[mem_address+1] as u16;
+            let mem_value = this_byte << 8 | next_byte;
+            (self.get_register_value("AX"), mem_value)
+        } else {
+            let mem_value = self.memory_manager.memory[mem_address] as u16;
+            let al_value = self.get_register_value("AL");
+            (mem_value, al_value)
+        };
+
+        self.set_register_value("AX", target_value);
+        if let Err(error) = self.div_const(source_value, word, signed) {
+            return Err(error);
+        }
+        Ok(())
+    }
+
+    // Divide the specified constant value by the value in AX or AL register.
+    // If `word` is true, use the 16-bit AX register, otherwise use the 8-bit AL register.
+    fn div_const(&mut self, value: u16, word: bool, signed: bool) -> Result<(), ErrorCode> {
+        if word {
+            self.div_16bit(value, signed)
+        } else {
+            self.div_8bit(value as u8, signed)
+        }
     }
 }
 
@@ -1700,7 +2006,9 @@ fn main() -> io::Result<()> {
             ErrorCode::StackOverflow => println!("Stack Overflow error. Halted at {}", assembly.get_register_value("IP")),
             ErrorCode::StackUnderflow     => println!("Stack Underflow error. Halted at {}", assembly.get_register_value("IP")),
             ErrorCode::InvalidOpcode      => println!("Invalid Opcode. Halted at {}", assembly.get_register_value("IP")),
+            ErrorCode::InvalidRegister      => println!("Invalid Register. Halted at {}", assembly.get_register_value("IP")),
             ErrorCode::UnknownVariable    => println!("Unknown Variable. Halted at {}", assembly.get_register_value("IP")),
+            ErrorCode::Overflow           => println!("Overflow. Halted at {}", assembly.get_register_value("IP")),
             ErrorCode::InvalidPointer(msg)  => println!("Invalid Pointer. Halted at {}. {}", assembly.get_register_value("IP"), msg),
             ErrorCode::NotEnoughSpace(msg)  => println!("Not enough space to store variable. Halted at {}. {}", assembly.get_register_value("IP"), msg),
             ErrorCode::InvalidValue(msg)   => println!("Invalid value. Halted at {}. {}", assembly.get_register_value("IP"), msg),
