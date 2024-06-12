@@ -3,4 +3,4 @@ label:
    print [thing]
    sub [thing], 1
    cmp [thing], 0
-   jne labael
+   jne label
