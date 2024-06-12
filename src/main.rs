@@ -195,6 +195,31 @@ enum Command {
     Syntax
     jle <label>
     */
+    Jl,
+    /*
+    Syntax
+    jle <label>
+    */
+    Jb,
+    /*
+    Syntax
+    jle <label>
+    */
+    Jbe,
+    /*
+    Syntax
+    jle <label>
+    */
+    Ja,
+    /*
+    Syntax
+    jle <label>
+    */
+    Jae,
+    /*
+    Syntax
+    jle <label>
+    */
     Cmp,
     /*
     Syntax
@@ -379,39 +404,88 @@ Syntax:
     jmp [<mem>]".to_string()
             },
             Command::Je => {
-                "The 'je' command jumps to the specified label if the zero flag is set.
+                "The 'je' command jumps to the specified label if the zero flag (ZF) is set, meaning the last comparison resulted in equality.
 Syntax:
-    je <label>".to_string()
+    je <label>
+Explanation:
+    Jump if the first operand is equal to the second operand.".to_string()
             },
             Command::Jne => {
-                "The 'jne' command jumps to the specified label if the zero flag is not set.
+                "The 'jne' command jumps to the specified label if the zero flag (ZF) is not set, meaning the last comparison did not result in equality.
 Syntax:
-    jne <label>".to_string()
+    jne <label>
+Explanation:
+    Jump if the first operand is not equal to the second operand.".to_string()
             },
             Command::Jz => {
-                "The 'jz' command jumps to the specified label if the zero flag is set (alias for 'je').
+                "The 'jz' command jumps to the specified label if the zero flag (ZF) is set (alias for 'je').
 Syntax:
-    jz <label>".to_string()
-                            },
-                Command::Jnz => {
-                    "The 'Jnz' command jumps to the specified label if the zero flag is not set (alias for 'jne').
-    Syntax:
-        jnz <label>".to_string()
-                            },
+    jz <label>
+Explanation:
+    Jump if the first operand is equal to the second operand.".to_string()
+            },
+            Command::Jnz => {
+                "The 'jnz' command jumps to the specified label if the zero flag (ZF) is not set (alias for 'jne').
+Syntax:
+    jnz <label>
+Explanation:
+Jump if the first operand is not equal to the second operand.".to_string()
+            },
             Command::Jg => {
-                "The 'jg' command jumps to the specified label if the greater flag is set.
+                "The 'jg' command jumps to the specified label if the zero flag (ZF) is not set and the sign flag (SF) equals the overflow flag (OF), meaning the first operand is greater than the second operand in signed comparison.
 Syntax:
-    jg <label>".to_string()
+    jg <label>
+Explanation:
+    Jump if the first operand is greater than the second operand (signed).".to_string()
             },
             Command::Jge => {
-                "The 'jge' command jumps to the specified label if the greater or equal flag is set.
+                "The 'jge' command jumps to the specified label if the sign flag (SF) equals the overflow flag (OF), meaning the first operand is greater than or equal to the second operand in signed comparison.
 Syntax:
-    jge <label>".to_string()
+    jge <label>
+Explanation:
+    Jump if the first operand is greater than or equal to the second operand (signed).".to_string()
+            },
+            Command::Jl => {
+                "The 'jl' command jumps to the specified label if the sign flag (SF) does not equal the overflow flag (OF), meaning the first operand is less than the second operand in signed comparison.
+Syntax:
+    jl <label>
+Explanation:
+    Jump if the first operand is less than the second operand (signed).".to_string()
             },
             Command::Jle => {
-                "The 'jle' command jumps to the specified label if the less or equal flag is set.
-    Syntax:
-        jle <label>".to_string()
+                "The 'jle' command jumps to the specified label if the zero flag (ZF) is set or the sign flag (SF) is not equal to the overflow flag (OF), meaning the first operand is less than or equal to the second operand in signed comparison.
+Syntax:
+    jle <label>
+Explanation:
+    Jump if the first operand is less than or equal to the second operand (signed).".to_string()
+            },
+            Command::Ja => {
+                "The 'ja' command jumps to the specified label if the carry flag (CF) and the zero flag (ZF) are both not set, meaning the first operand is greater than the second operand in unsigned comparison.
+Syntax:
+    ja <label>
+Explanation:
+    Jump if the first operand is greater than the second operand (unsigned).".to_string()
+            },
+            Command::Jae => {
+                "The 'jae' command jumps to the specified label if the carry flag (CF) is not set, meaning the first operand is greater than or equal to the second operand in unsigned comparison.
+Syntax:
+    jae <label>
+Explanation:
+    Jump if the first operand is greater than or equal to the second operand (unsigned).".to_string()
+            },
+            Command::Jb => {
+                "The 'jb' command jumps to the specified label if the carry flag (CF) is set, meaning the first operand is less than the second operand in unsigned comparison.
+Syntax:
+    jb <label>
+Explanation:
+    Jump if the first operand is less than the second operand (unsigned).".to_string()
+            },
+            Command::Jbe => {
+                "The 'jbe' command jumps to the specified label if the carry flag (CF) is set or the zero flag (ZF) is set, meaning the first operand is less than or equal to the second operand in unsigned comparison.
+Syntax:
+    jbe <label>
+Explanation:
+    Jump if the first operand is less than or equal to the second operand (unsigned).".to_string()
             },
             Command::Cmp => {
                 "The 'cmp' command compares two operands.
@@ -464,9 +538,10 @@ impl FromStr for Command {
             "je" => Ok(Command::Je),
             "jne" => Ok(Command::Jne),
             "jz" => Ok(Command::Jz),
-            "jnz" => Ok(Command::Jg),
+            "jnz" => Ok(Command::Jnz),
             "jg" => Ok(Command::Jg),
             "jge" => Ok(Command::Jge),
+            "jl" => Ok(Command::Jl),
             "jle" => Ok(Command::Jle),
             "cmp" => Ok(Command::Cmp),
             "call" => Ok(Command::Call),
@@ -1485,66 +1560,94 @@ impl Engine {
                 },
 
                 //////// JUMPS ////////////
-                ["jmp", label] => if self.labels.get(*label).is_some() {
-                    if let Err(error) = self.jump_to(label) {               
+                ["jmp", label] => {
+                    if let Err(error) = self.jump_to(label) {     
+                        println!("{}", Command::get_help_string(Command::Jmp));
                         return Err(error);
                     }
                 }
 
-                [_flag @ ("je"|"jz"|"jne"|"jnz"), label] => if self.labels.get(*label).is_some() {
+                [_flag @ ("je"|"jz"|"jne"|"jnz"), label] => {
                     let ne = *_flag == "jne" || *_flag == "jnz";
                     if !(ne ^ self.is_flag_on(Flag::Zero)) {
                         continue;
                     }
-                    if let Err(error) = self.jump_to(label) {               
+                    if let Err(error) = self.jump_to(label) {     
+                        match *_flag {
+                            "je" =>  println!("{}", Command::get_help_string(Command::Je)),
+                            "jz" =>  println!("{}", Command::get_help_string(Command::Jz)),
+                            "jne" =>  println!("{}", Command::get_help_string(Command::Jne)),
+                            "jnz" =>  println!("{}", Command::get_help_string(Command::Jnz)),
+                            _ => {}
+                        }          
                         return Err(error);
                     }
                 }
                 
-                [_flag @ ("jg" | "jge"), label] => if self.labels.get(*label).is_some() {
+                [_flag @ ("jg" | "jge"), label] => {
                     let is_jg = *_flag == "jg";
 
                     if !(is_jg && (self.is_flag_on(Flag::Sign) ^ self.is_flag_on(Flag::Overflow))) {
                         continue;
                     }
             
-                    if let Err(error) = self.jump_to(label) {               
+                    if let Err(error) = self.jump_to(label) {   
+                        match *_flag {
+                            "jg" =>  println!("{}", Command::get_help_string(Command::Jg)),
+                            "jge" =>  println!("{}", Command::get_help_string(Command::Jge)),
+                            _ => {}
+                        }                
                         return Err(error);
                     }
                 }
 
-                [_flag @ ("jl" | "jle"), label] => if self.labels.get(*label).is_some() {
+                [_flag @ ("jl" | "jle"), label] => {
                     let is_jl = *_flag == "jl";
 
                     if !(is_jl && (self.is_flag_on(Flag::Sign) ^ self.is_flag_on(Flag::Overflow))) {
                         continue;
                     }
             
-                    if let Err(error) = self.jump_to(label) {               
+                    if let Err(error) = self.jump_to(label) {    
+                        match *_flag {
+                            "jl" =>  println!("{}", Command::get_help_string(Command::Jl)),
+                            "jle" =>  println!("{}", Command::get_help_string(Command::Jle)),
+                            _ => {}
+                        }   
                         return Err(error);
                     }
                 }
 
-                [_flag @ ("ja" | "jae"), label] => if self.labels.get(*label).is_some() {
+                [_flag @ ("ja" | "jae"), label] => {
                     let is_jl = *_flag == "ja";
 
                     if !(is_jl && (self.is_flag_on(Flag::Carry) ^ self.is_flag_on(Flag::Zero))) {
                         continue;
                     }
             
-                    if let Err(error) = self.jump_to(label) {               
+                    if let Err(error) = self.jump_to(label) {       
+                        match *_flag {
+                            "ja" =>  println!("{}", Command::get_help_string(Command::Ja)),
+                            "jae" =>  println!("{}", Command::get_help_string(Command::Jae)),
+                            _ => {}
+                        }           
                         return Err(error);
                     }
                 }
 
-                [_flag @ ("jb" | "jbe"), label] => if self.labels.get(*label).is_some() {
+                [_flag @ ("jb" | "jbe"), label] => {
                     let is_jbe = *_flag == "jbe";
 
                     if self.is_flag_on(Flag::Carry) || (is_jbe && self.is_flag_on(Flag::Zero)) {
                         continue;
                     }
 
-                    if let Err(error) = self.jump_to(label) {               
+                    if let Err(error) = self.jump_to(label) {          
+                        match *_flag {
+                            "jb" =>  println!("{}", Command::get_help_string(Command::Jb)),
+                            "jbe" =>  println!("{}", Command::get_help_string(Command::Jbe)),
+                            _ => {}
+                        }        
                         return Err(error);
                     }
                 }
@@ -1555,40 +1658,41 @@ impl Engine {
                         let is_negative_first = first_operand.starts_with("-");
                         let is_negative_second = second_operand.starts_with("-");
                     
-                        // Remove '-' prefix for numeric processing
-                        let mut arg1 = first_operand.clone();
-                        let mut arg2 = second_operand.clone();
+                        let arg1 = if is_negative_first {
+                            first_operand[1..].to_string()
+                        } else {
+                            first_operand.to_string()
+                        };
                         
-                        if is_negative_first {
-                            arg1 = &first_operand[1..];
-                        }
-                        if is_negative_second {
-                            arg2 = &second_operand[1..];
-                        }
+                        let arg2 = if is_negative_second {
+                            second_operand[1..].to_string()
+                        } else {
+                            second_operand.to_string()
+                        };
                     
                         // Initialize variables to store parsed values
-                        let mut first_value: isize = 0;
-                        let mut second_value: isize = 0;
+                        let first_value: isize;
+                        let second_value: isize;
                     
                         // Process first operand
-                        if self.memory_manager.is_memory_operand(arg1) {
-                            match self.memory_manager.calculate_effective_address(arg1, &self.registers, false) {
+                        if self.memory_manager.is_memory_operand(&arg1) {
+                            match self.memory_manager.calculate_effective_address(&arg1, &self.registers, false) {
                                 Ok(value) => first_value = value as isize,
                                 Err(error) => return Err(error),
                             }
-                        } else if let Some(v) = self.memory_manager.parse_value(arg1, is_negative_first, &self.registers, false) {
+                        } else if let Some(v) = self.memory_manager.parse_value(&arg1, is_negative_first, &self.registers, false) {
                             first_value = v as isize;
                         } else {
                             return Err(ErrorCode::InvalidValue(format!("Could not parse {}", first_operand)));
                         }
                     
                         // Process second operand
-                        if self.memory_manager.is_memory_operand(arg2) {
-                            match self.memory_manager.calculate_effective_address(arg2, &self.registers, false) {
+                        if self.memory_manager.is_memory_operand(&arg2) {
+                            match self.memory_manager.calculate_effective_address(&arg2, &self.registers, false) {
                                 Ok(value) => second_value = value as isize,
                                 Err(error) => return Err(error),
                             }
-                        } else if let Some(v) = self.memory_manager.parse_value(arg2, is_negative_second, &self.registers, false) {
+                        } else if let Some(v) = self.memory_manager.parse_value(&arg2, is_negative_second, &self.registers, false) {
                             second_value = v as isize;
                         } else {
                             return Err(ErrorCode::InvalidValue(format!("Could not parse {}", second_operand)));
@@ -1618,7 +1722,7 @@ impl Engine {
             self.lines.ip = *address;
         } else {
             return Err(ErrorCode::InvalidPointer(
-                format!("Label {} cannot be found.", label)
+                format!("Label \"{}\" cannot be found.", label)
             ));
         }
         Ok(())

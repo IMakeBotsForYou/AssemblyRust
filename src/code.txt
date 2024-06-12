@@ -1,6 +1,6 @@
 thing db, 5
 label:
-   print thing
+   print [thing]
    sub [thing], 1
    cmp [thing], 0
-   jne label
+   jne labael
