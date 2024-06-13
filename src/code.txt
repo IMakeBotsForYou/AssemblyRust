@@ -2,7 +2,7 @@ a dd, 0
 b dd, 1
 c dd, 0
 
-mov CX, 50
+mov CX, 10
 
 loop:
    mov EAX, [a]
@@ -15,6 +15,5 @@ loop:
    mov [b], EAX
    print [c]
    dec CX
-   cmp
    jnz loop
 
