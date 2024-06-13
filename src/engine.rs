@@ -2,6 +2,7 @@ use std::{
     io,
     collections::{HashMap, HashSet},
 };
+use std::env;
 use crate::{
     error_code::ErrorCode,
     flag::Flag,
@@ -130,12 +131,12 @@ impl Engine {
 
     fn get_pointer_argument_size<'a>(&self, argument: &'a str) -> (Option<VariableSize>, &'a str) {
         let parts: Vec<&str> = argument.split_whitespace().collect();
-    
         match parts.as_slice() {
             ["BYTE", "PTR", arg] => (Some(VariableSize::Byte), *arg),
             ["WORD", "PTR", arg] => (Some(VariableSize::Word), *arg),
             ["DWORD", "PTR", arg] => (Some(VariableSize::DoubleWord), *arg),
             [arg] if self.memory_manager.is_memory_operand(*arg) => {
+
                 if let Ok((_, size)) = self.parse_value_from_parameter(*arg, None) {
                     (Some(size), *arg)
                 } else {
@@ -232,7 +233,11 @@ impl Engine {
         self.lines.set_ip(0);
 
         loop {
-            let verbose = true;
+            let cmd_arg: Vec<String> = env::args().collect();
+
+            // Check if the verbose flag is set
+            let verbose = cmd_arg.iter().any(|arg| arg == "--verbose=true");            
+            
             let maybe_arguments = self.lines.next(&mut self.registers[get_register("IP")], verbose);
 
             if maybe_arguments.is_none() {
@@ -378,7 +383,6 @@ impl Engine {
                 // OP    REG      MEM/REG/CONST
                 ["mov", reg, parameter] if self.is_valid_register(*reg) => {
                     let (size_option, memory_address) = self.get_pointer_argument_size(parameter);
-        
                     let (constant, assumed_size) = self.parse_value_from_parameter(memory_address, size_option)?;
                     if let Some(reg_size) = get_register_size(reg) {
                         if assumed_size.value() > reg_size.value() {
@@ -388,17 +392,17 @@ impl Engine {
                     self.mov_reg_const(reg, constant)?;
 
                 },
-                // OP       MEM           REG/CONST
-                ["mov", memory_address, parameter] if self.memory_manager.is_memory_operand(*memory_address) => {
+                // OP       MEM               REG/CONST
+                ["mov", memory_address, parameter] => {
 
                     if self.memory_manager.is_memory_operand(parameter) {
                         return Err(ErrorCode::InvalidValue(format!("Direct memory transfer is not supported.")));
                     }
 
-                    let (size_option_src, _) = self.get_pointer_argument_size(parameter);
+                    let (size_option_dst, _) = self.get_pointer_argument_size(parameter);
 
-                    let (size_option_dst, memory_address_str_dest) = self.get_pointer_argument_size(memory_address);
-                    
+
+                    let (size_option_src, sliced_memory_string) = self.get_pointer_argument_size(memory_address);
 
                     if let Some(size_dst) = size_option_dst {
                         if let Some(size_src) = size_option_src {
@@ -407,21 +411,28 @@ impl Engine {
                             }
                         }
                     };
-
-                    
                     
 
                     // Calculate effective address of destination            
-                    match self.memory_manager.calculate_effective_address(memory_address_str_dest, &self.registers, true) {
+                    match self.memory_manager.calculate_effective_address(sliced_memory_string, &self.registers, true) {
                         // Destination is valid address
                         Ok(parsed_address) => {
                             // Get value and size of memory to mov into destination address
-                            let (constant, assumed_size ) = {
+                            let (constant, assumed_size_parameter ) = {
                                 let (v, s) = self.parse_value_from_parameter(parameter, size_option_src)?;
                                 (v, size_option_src.unwrap_or(s))
                             };
-
-                            match assumed_size {
+                            let (_, assumed_size_memory) = self.parse_value_from_parameter(sliced_memory_string, size_option_src)?; 
+                            if assumed_size_parameter != assumed_size_memory {
+                                return Err(
+                                    ErrorCode::InvalidValue(
+                                        format!("Target memory pointer size ({}) doesn't match second parameter size ({})",
+                                                         assumed_size_memory.value(),          assumed_size_parameter.value())
+                                    )
+                                );
+                            }
+                            
+                            match assumed_size_parameter {
                                 VariableSize::Byte => self.memory_manager.set_byte(parsed_address, constant as u8)?,
                                 VariableSize::Word => self.memory_manager.set_word(parsed_address, constant as u16)?,
                                 VariableSize::DoubleWord => self.memory_manager.set_dword(parsed_address, constant as u32)?,
@@ -859,6 +870,7 @@ impl Engine {
     }
 
     fn add_or_sub_mem_reg(&mut self, memory_address: usize, src: &str, is_addition: bool) -> Result<(), ErrorCode> {
+
         let (result, overflowed, size) = match src {
             reg if reg.ends_with('L') || reg.ends_with('H') => {
                 let src_value = self.registers[get_register(src)].get_byte(reg.ends_with('H'));
@@ -878,7 +890,7 @@ impl Engine {
             "AX" | "BX" | "CX" | "DX" | "SI" | "DI" | "FLAG" | "IP" => {
                 let src_value = self.registers[get_register(src)].get_word();
                 let dest_value = self.memory_manager.get_word(memory_address)?;
-                
+
                 let (sum, overflowed) = if is_addition {
                     dest_value.overflowing_add(src_value)
                 } else {
@@ -894,7 +906,7 @@ impl Engine {
 
                 let src_value = self.registers[get_register(src)].get_dword();
                 let dest_value = self.memory_manager.get_dword(memory_address)?;
-                
+
                 let (sum, overflowed) = if is_addition {
                     dest_value.overflowing_add(src_value)
                 } else {

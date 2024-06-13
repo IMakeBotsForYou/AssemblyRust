@@ -2,7 +2,7 @@ a dd, 0
 b dd, 1
 c dd, 0
 
-mov DX, 10
+mov DX, 50
 
 loop_: 
    mov CX, DX
@@ -11,12 +11,10 @@ loop:
    add EAX, [b]
    mov [c], EAX
 
-   mov EAX, [b]
-   mov [a], EAX
-   mov EAX, [c]
-   mov [b], EAX
-   print DWORD PTR [a]
-   print DWORD PTR [b]
+   mov EAX, DWORD PTR [b]
+   mov DWORD PTR [a], EAX
+   mov EAX, DWORD PTR [c]
+   mov DWORD PTR [b], EAX
    print DWORD PTR [c]
    dec DX
    cmp DX, 0
@@ -24,5 +22,4 @@ loop:
    dec CX
    cmp
    jnz loop_
-
 exit:

@@ -260,28 +260,31 @@ impl MemoryManager {
         Ok(())
 
     }
-    pub fn set_word(&mut self, index: usize, value: u16) -> Result<(), ErrorCode> {
-        self.check_memory_address(index)?;
-        self.check_memory_address(index+1)?;
+    pub fn set_word(&mut self, index: usize, value: u16) -> Result<(), ErrorCode> {        
+        self.check_memory_address(index)?; // Lower Bound
+        self.check_memory_address(index+1)?; // Upper Bound
         self.memory[index] = (value >> 8) as u8;
         self.memory[index+1] = (value & 0x00FF) as u8;
         Ok(())
     }
 
     pub fn set_dword(&mut self, index: usize, value: u32)-> Result<(), ErrorCode>  {
-        for i in 0..4 { 
-            let mask: u32 = 0xFF << (4 * (3 - i));
-            // EXAMPLE
-            // value = 0x12 34 56 78
-            // i = 0
-            // mask  = 0xFF 00 00 00
-            // value = 0x12 00 00 00
-            // LSHIFT  24 (8 * (3 - 0))
-            // value = 0x00 00 00 12 as u8 
-            // value = 0x12 :)
 
-            self.set_byte(index+i, ((value & mask) >> (8 * (3-i))) as u8)?;
-        }
+        self.check_memory_address(index)?;   // Lower bound 
+        self.check_memory_address(index+3)?; // Upper Bound
+        // This is simpler.
+        self.memory[index] =    ((value & 0xFF000000) >> 24) as u8;
+        self.memory[index+1] = ((value & 0x00FF0000) >> 16) as u8;
+        self.memory[index+2] = ((value & 0x0000FF00) >> 8) as u8;
+        self.memory[index+3] =  (value & 0x000000FF) as u8;
+
+        // for i in 0..4 {
+        //     let mask = 0xFF000000 >> (i * 8); // Make mask for the byte we want
+        //     let masked_value = value & mask;  // Mask everything else out
+        //     let shifted_value = (masked_value >> ((3-i) * 8)) as u8; // Convert that byte to a u8
+        //     self.memory[index+i] = shifted_value; // Set it
+        // }
+
         Ok(())
     }
     pub fn get_byte(&self, index: usize) -> Result<u8, ErrorCode> {
