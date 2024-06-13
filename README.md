@@ -16,11 +16,11 @@ This project is an 8086 TASM (Turbo Assembler) simulator that supports 32-bit re
 Move data between registers, memory, and constants.
 
 Syntax:
-mov <reg>, <reg>
-mov <reg>, [<mem>]
-mov [<mem>], <reg>
-mov <reg>, <const>
-mov [<mem>], <const>
+* mov \<reg\>, \<reg\>
+* mov \<reg\>, [\<mem\>]
+* mov [\<mem\>], \<reg\>
+* mov \<reg\>, \<const\>
+* mov [\<mem\>], \<const\>
 
 
 
@@ -29,9 +29,9 @@ mov [<mem>], <const>
 Push data onto the stack.
 
 Syntax:
-push <reg>
-push [<mem>]
-push <const>
+* push \<reg\>
+* push [\<mem\>]
+* push \<const\>
 
 csharp
 
@@ -40,8 +40,8 @@ csharp
 Pop data from the stack.
 
 Syntax:
-pop <reg>
-pop [<mem>]
+* pop \<reg\>
+* pop [\<mem\>]
 
 
 
@@ -50,33 +50,29 @@ pop [<mem>]
 Load effective address.
 
 Syntax:
-lea <reg>, [<mem>]
-
-sql
+* lea \<reg\>, [\<mem\>]
 
 
 ### Add
 Add values to registers or memory.
 
 Syntax:
-add <reg>, <reg>
-add <reg>, [<mem>]
-add <reg>, <const>
-add [<mem>], <reg>
-add [<mem>], <const>
-
-vbnet
+* add \<reg\>, \<reg\>
+* add \<reg\>, [\<mem\>]
+* add \<reg\>, \<const\>
+* add [\<mem\>], \<reg\>
+* add [\<mem\>], \<const\>
 
 
 ### Sub
 Subtract values from registers or memory.
 
 Syntax:
-sub <reg>, <reg>
-sub <reg>, [<mem>]
-sub <reg>, <const>
-sub [<mem>], <reg>
-sub [<mem>], <const>
+* sub \<reg\>, \<reg\>
+* sub \<reg\>, [\<mem\>]
+* sub \<reg\>, \<const\>
+* sub [\<mem\>], \<reg\>
+* sub [\<mem\>], \<const\>
 
 
 
@@ -85,8 +81,8 @@ sub [<mem>], <const>
 Increment a register or memory value.
 
 Syntax:
-inc <reg>
-inc [<mem>]
+* inc \<reg\>
+* inc [\<mem\>]
 
 
 
@@ -95,8 +91,8 @@ inc [<mem>]
 Decrement a register or memory value.
 
 Syntax:
-dec <reg>
-dec [<mem>]
+* dec \<reg\>
+* dec [\<mem\>]
 
 
 
@@ -105,10 +101,10 @@ dec [<mem>]
 Unsigned multiplication.
 
 Syntax:
-mul <reg>
-mul [<mem>]
-mul <const>
-mul <var>
+* mul \<reg\>
+* mul [\<mem\>]
+* mul \<const\>
+* mul \<var\>
 
 
 
@@ -117,10 +113,10 @@ mul <var>
 Signed multiplication.
 
 Syntax:
-imul <reg>
-imul [<mem>]
-imul <const>
-imul <var>
+* imul \<reg\>
+* imul [\<mem\>]
+* imul \<const\>
+* imul \<var\>
 
 
 
@@ -129,10 +125,10 @@ imul <var>
 Unsigned division.
 
 Syntax:
-div <reg>
-div [<mem>]
-div <var>
-div <const>
+* div \<reg\>
+* div [\<mem\>]
+* div \<var\>
+* div \<const\>
 
 
 
@@ -141,10 +137,10 @@ div <const>
 Signed division.
 
 Syntax:
-idiv <reg>
-idiv [<mem>]
-idiv <var>
-idiv <const>
+* idiv \<reg\>
+* idiv [\<mem\>]
+* idiv \<var\>
+* idiv \<const\>
 
 
 
@@ -153,7 +149,7 @@ idiv <const>
 Unconditional jump.
 
 Syntax:
-jmp <label>
+* jmp \<label\>
 
 
 
@@ -162,7 +158,7 @@ jmp <label>
 Jump if equal.
 
 Syntax:
-je <label>
+* je \<label\>
 
 
 
@@ -171,7 +167,7 @@ je <label>
 Jump if not equal.
 
 Syntax:
-jne <label>
+* jne \<label\>
 
 
 
@@ -180,7 +176,7 @@ jne <label>
 Jump if zero.
 
 Syntax:
-jz <label>
+* jz \<label\>
 
 
 
@@ -189,7 +185,7 @@ jz <label>
 Jump if not zero.
 
 Syntax:
-jnz <label>
+* jnz \<label\>
 
 
 
@@ -198,7 +194,7 @@ jnz <label>
 Jump if greater.
 
 Syntax:
-jg <label>
+* jg \<label\>
 
 
 
@@ -207,7 +203,7 @@ jg <label>
 Jump if greater or equal.
 
 Syntax:
-jge <label>
+* jge \<label\>
 
 
 
@@ -216,7 +212,7 @@ jge <label>
 Jump if less or equal.
 
 Syntax:
-jle <label>
+* jle \<label\>
 
 
 
@@ -225,7 +221,7 @@ jle <label>
 Jump if less.
 
 Syntax:
-jl <label>
+* jl \<label\>
 
 
 
@@ -234,7 +230,7 @@ jl <label>
 Jump if below.
 
 Syntax:
-jb <label>
+* jb \<label\>
 
 
 
@@ -243,7 +239,7 @@ jb <label>
 Jump if below or equal.
 
 Syntax:
-jbe <label>
+* jbe \<label\>
 
 
 
@@ -252,7 +248,7 @@ jbe <label>
 Jump if above.
 
 Syntax:
-ja <label>
+* ja \<label\>
 
 
 
@@ -261,7 +257,7 @@ ja <label>
 Jump if above or equal.
 
 Syntax:
-jae <label>
+* jae \<label\>
 
 
 
@@ -270,13 +266,11 @@ jae <label>
 Compare two values.
 
 Syntax:
-cmp <reg>, <reg>
-cmp <reg>, [<mem>]
-cmp <reg>, <const>
-cmp [<mem>], <reg>
-cmp [<mem>], <const>
-
-less
+* cmp \<reg\>, \<reg\>
+* cmp \<reg\>, [\<mem\>]
+* cmp \<reg\>, \<const\>
+* cmp [\<mem\>], \<reg\>
+* cmp [\<mem\>], \<const\>
 
 
 ## Example Code
@@ -302,10 +296,10 @@ loop:
    print [c]
    dec CX
    jnz loop
-
+```
 
 Output:
-
+```
 [SAVED] Saved variable a @ 0
 [SAVED] Saved variable b @ 4
 [SAVED] Saved variable c @ 8
@@ -330,3 +324,4 @@ Register ESI:   0       (00000000 00000000)
 Register EDI:   0       (00000000 00000000)
 Register IP:    17      (00000000 00010001)
 Register FLAG:  10      (00000000 00001010)
+```
