@@ -2,15 +2,25 @@ use assembly::engine::Engine;  // Adjust the path based on your crate name and m
 use assembly::error_code::ErrorCode;
 use assembly::io;
 
+#[allow(dead_code)]
 mod engine;
+#[allow(dead_code)]
 mod flag;
+#[allow(dead_code)]
 mod memory_manager;
+#[allow(dead_code)]
 mod register;
+#[allow(dead_code)]
 mod variable_metadata;
+#[allow(dead_code)]
 mod line_processor;
+#[allow(dead_code)]
 mod command;
+#[allow(dead_code)]
 mod error_code;
+#[allow(dead_code)]
 mod status;
+#[allow(dead_code)]
 mod utils;
 
 fn main() -> io::Result<()>  {
@@ -31,18 +41,19 @@ fn main() -> io::Result<()>  {
             println!("Execution completed successfully.");
         }
         Err(error) => {
+            let ip = assembly.get_register_value("IP").unwrap_or_default();
             match error {
-                ErrorCode::DivisionByZero => println!("Division By Zero error. Halted at {}", assembly.get_register_value("IP")),
-                ErrorCode::StackOverflow => println!("Stack Overflow error. Halted at {}", assembly.get_register_value("IP")),
-                ErrorCode::StackUnderflow => println!("Stack Underflow error. Halted at {}", assembly.get_register_value("IP")),
-                ErrorCode::InvalidOpcode => println!("Invalid Opcode. Halted at {}", assembly.get_register_value("IP")),
-                ErrorCode::InvalidRegister => println!("Invalid Register. Halted at {}", assembly.get_register_value("IP")),
-                ErrorCode::VariableAlreadyExists => println!("Attempted to save variable/label that already exists. Halted at {}", assembly.get_register_value("IP")),
-                ErrorCode::UnknownVariable => println!("Unknown Variable. Halted at {}", assembly.get_register_value("IP")),
-                ErrorCode::Overflow => println!("Overflow. Halted at {}", assembly.get_register_value("IP")),
-                ErrorCode::InvalidPointer(msg) => println!("Invalid Pointer. Halted at {}. {}", assembly.get_register_value("IP"), msg),
-                ErrorCode::NotEnoughSpace(msg) => println!("Not enough space to store variable. Halted at {}. {}", assembly.get_register_value("IP"), msg),
-                ErrorCode::InvalidValue(msg) => println!("Invalid value. Halted at {}. {}", assembly.get_register_value("IP"), msg),
+                ErrorCode::DivisionByZero => println!("Division By Zero error. Halted at {}", ip),
+                ErrorCode::StackOverflow => println!("Stack Overflow error. Halted at {}", ip),
+                ErrorCode::StackUnderflow => println!("Stack Underflow error. Halted at {}", ip),
+                ErrorCode::InvalidOpcode => println!("Invalid Opcode. Halted at {}", ip),
+                ErrorCode::InvalidRegister => println!("Invalid Register. Halted at {}", ip),
+                ErrorCode::VariableAlreadyExists => println!("Attempted to save variable/label that already exists. Halted at {}", ip),
+                ErrorCode::UnknownVariable => println!("Unknown Variable. Halted at {}", ip),
+                ErrorCode::Overflow => println!("Overflow. Halted at {}", ip),
+                ErrorCode::InvalidPointer(msg) => println!("Invalid Pointer. Halted at {}. {}", ip, msg),
+                ErrorCode::NotEnoughSpace(msg) => println!("Not enough space to store variable. Halted at {}. {}", ip, msg),
+                ErrorCode::InvalidValue(msg) => println!("Invalid value. Halted at {}. {}", ip, msg),
             }
         }
     }

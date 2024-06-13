@@ -1,6 +1,28 @@
-thing db, 5
-label:
-   print [thing]
-   sub [thing], 1
-   cmp [thing], 0
-   jne label
+a dd, 0
+b dd, 1
+c dd, 0
+
+mov DX, 10
+
+loop_: 
+   mov CX, DX
+loop:
+   mov EAX, [a]
+   add EAX, [b]
+   mov [c], EAX
+
+   mov EAX, [b]
+   mov [a], EAX
+   mov EAX, [c]
+   mov [b], EAX
+   print DWORD PTR [a]
+   print DWORD PTR [b]
+   print DWORD PTR [c]
+   dec DX
+   cmp DX, 0
+   jle exit
+   dec CX
+   cmp
+   jnz loop_
+
+exit:

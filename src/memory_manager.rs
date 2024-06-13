@@ -1,6 +1,9 @@
 use crate::{
     error_code::ErrorCode, 
-    variable_metadata::VariableMetadata, 
+    variable_metadata::{
+        VariableMetadata,
+        VariableSize,
+    }, 
     register::{
         get_register, 
         Register
@@ -12,7 +15,7 @@ use regex::Regex;
 
 pub struct MemoryManager {
     memory: Vec<u8>,
-    variable_pointers: HashMap<String, VariableMetadata>,
+    pub variable_pointers: HashMap<String, VariableMetadata>,
 }
 
 impl MemoryManager {
@@ -21,6 +24,10 @@ impl MemoryManager {
             memory: vec![0; size],
             variable_pointers: HashMap::new(),
         }
+    }
+    
+    pub fn get_variable(&self, variable_name: &str) -> Option<&VariableMetadata> {
+        self.variable_pointers.get(variable_name)
     }
 
     pub fn check_memory_address(&self, mem_address: usize) -> Result<(), ErrorCode> {
@@ -33,30 +40,41 @@ impl MemoryManager {
         }
     }
 
-    pub fn save_variable(&mut self, variable_name: String, data: &[u16], stack_pointer: usize, size: usize) -> Result<(), ErrorCode> {
-        let length = data.len() * size;
+    pub fn save_variable(&mut self, variable_name: String, data: &[u32], stack_pointer: usize, size: VariableSize) -> Result<(), ErrorCode> {
+        let multiplier = size.value();
+
+        let length = data.len() * multiplier;
         if self.variable_pointers.get(&variable_name).is_some() {
             return Err(ErrorCode::VariableAlreadyExists);
         }
         if let Ok(location) = self.find_free_block(length, stack_pointer) {
-            // Copy data to the found location
-
-            for (i, &byte) in data.iter().enumerate() {
-                if size == 1 {
-                    self.memory[location + i] = byte as u8;
-                } else {
-                    self.memory[location+i*size] = (byte >> 8) as u8;
-                    self.memory[location+i*size+1] = (byte & 0x0FF) as u8;
-                }
-            }
-
-            println!("[SAVED] Saved variable {} @ {}\n", variable_name, location);
-
             // Save the metadata with the correct start_index
+            println!("[SAVED] Saved variable {} @ {}\n", variable_name, location);
             self.variable_pointers.insert(variable_name, VariableMetadata::new(
                 location,
                 length,
+                size,
             ));
+
+            // Copy data to the found location
+
+            for (i, &byte) in data.iter().enumerate() {
+                match size {
+                    VariableSize::Byte => self.memory[location + i] = byte as u8,
+                    VariableSize::Word => {
+                        self.memory[location+i*multiplier] = (byte >> 8) as u8;
+                        self.memory[location+i*multiplier+1] = (byte & 0x00FF) as u8;
+                    },
+                    VariableSize::DoubleWord => {
+                        self.memory[location+i*multiplier] =   (byte >> 24) as u8;
+                        self.memory[location+i*multiplier+1] =   ((byte & 0x00FF0000) >> 16) as u8;
+                        self.memory[location+i*multiplier+2] =   ((byte & 0x0000FF00) >> 8) as u8;
+                        self.memory[location+i*multiplier+3] = byte as u8;
+                    },
+                }
+            }
+
+
             
             Ok(())
         } else {
@@ -74,8 +92,16 @@ impl MemoryManager {
             return Ok(0);
         }
 
-        for (_, metadata) in &self.variable_pointers {
+        // Step 1: Collect entries into a vector
+        let mut entries: Vec<_> = self.variable_pointers.iter().collect();
+
+        // Step 2: Sort entries by start_index of VariableMetadata
+        entries.sort_by_key(|(_, metadata)| metadata.start_index);
+
+
+        for (_, metadata) in entries {
             // Check if there's enough contiguous free memory between allocated blocks
+
             let end_index = metadata.start_index + metadata.length;
 
             // Check if there's enough free space between end of previous block and start of current block
@@ -228,18 +254,57 @@ impl MemoryManager {
         }
     }
 
-    pub fn set_memory(&mut self, index: usize, value: u8) {
+    pub fn set_byte(&mut self, index: usize, value: u8) -> Result<(), ErrorCode> {
+        self.check_memory_address(index)?;
         self.memory[index] = value;
+        Ok(())
+
+    }
+    pub fn set_word(&mut self, index: usize, value: u16) -> Result<(), ErrorCode> {
+        self.check_memory_address(index)?;
+        self.check_memory_address(index+1)?;
+        self.memory[index] = (value >> 8) as u8;
+        self.memory[index+1] = (value & 0x00FF) as u8;
+        Ok(())
     }
 
+    pub fn set_dword(&mut self, index: usize, value: u32)-> Result<(), ErrorCode>  {
+        for i in 0..4 { 
+            let mask: u32 = 0xFF << (4 * (3 - i));
+            // EXAMPLE
+            // value = 0x12 34 56 78
+            // i = 0
+            // mask  = 0xFF 00 00 00
+            // value = 0x12 00 00 00
+            // LSHIFT  24 (8 * (3 - 0))
+            // value = 0x00 00 00 12 as u8 
+            // value = 0x12 :)
+
+            self.set_byte(index+i, ((value & mask) >> (8 * (3-i))) as u8)?;
+        }
+        Ok(())
+    }
     pub fn get_byte(&self, index: usize) -> Result<u8, ErrorCode> {
         self.check_memory_address(index)?;
         Ok(self.memory[index])
     }
 
     pub fn get_word(&self, index: usize) -> Result<u16, ErrorCode>  {
-        self.check_memory_address(index+1)?; {
+        self.check_memory_address(index)?;
+        self.check_memory_address(index+1)?; 
         Ok((self.memory[index] as u16) << 8 | self.memory[index+1] as u16)
     }
+
+    pub fn get_dword(&self, index: usize) -> Result<u32, ErrorCode>  {
+        for i in 0..4 {
+            self.check_memory_address(index+i)?;
+        }
+        Ok(
+            (self.memory[index  ] as u32) << 24 |
+            (self.memory[index+1] as u32) << 16 |
+            (self.memory[index+2] as u32) << 8 |
+            (self.memory[index+3] as u32)
+        )
+        
     }
 }
