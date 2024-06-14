@@ -19,25 +19,21 @@ pub fn read_lines_from_file(filename: &str) -> io::Result<Vec<String>> {
 }
 
 pub fn parse_string_to_usize(value: &str) -> Option<usize> {
-    let parsed_value = if value.starts_with("0x") {
+    let parsed_value = if value.ends_with("h") {
         // Hexadecimal format
-        usize::from_str_radix(&value[2..], 16).ok()
-    } else if value.starts_with("0b") {
+        isize::from_str_radix(&value[..value.len()-1], 16).ok()
+    } else if value.ends_with("b") {
         // Binary format
-        usize::from_str_radix(&value[2..], 2).ok()
-    } else if value.starts_with("-0b") {
-        // Negative Binary format
-        let v = usize::from_str_radix(&value[3..], 2).ok()?;
-        Some(isize::MAX as usize + 1 - v)
-    } else if value.starts_with("-") {
-        // Negative Decimal format
-        let v = usize::from_str_radix(&value[1..], 10).ok()?;
-        Some(isize::MAX as usize + 1 - v)
+        isize::from_str_radix(&value[..value.len()-1], 2).ok()
     } else {
         // Decimal format
-        value.parse::<usize>().ok()
+        isize::from_str_radix(&value, 10).ok()
     };
 
-    parsed_value
+    if let Some(v) = parsed_value {
+        Some(v as usize)
+    } else {
+        None
+    }
 }
 

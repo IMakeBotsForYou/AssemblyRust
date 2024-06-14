@@ -6,23 +6,29 @@ use crate::{
     }, 
     register::{
         get_register, 
-        Register
+        Register,
+        get_register_size
     }, 
     utils::parse_string_to_usize};
 
 use std::collections::HashMap;
 use regex::Regex;
 
+
 pub struct MemoryManager {
     memory: Vec<u8>,
     pub variable_pointers: HashMap<String, VariableMetadata>,
+    segments: [usize; 3],
+    stack_pointer: usize,
 }
 
 impl MemoryManager {
-    pub fn new(size: usize) -> Self {
+    pub fn new(size: usize, seg: [usize; 3]) -> Self {
         MemoryManager {
             memory: vec![0; size],
             variable_pointers: HashMap::new(),
+            segments: seg,
+            stack_pointer: size-1
         }
     }
     
@@ -39,15 +45,54 @@ impl MemoryManager {
             Ok(())
         }
     }
+    
+    pub fn push_to_stack(&mut self, value: u32, size: VariableSize) -> Result<(), ErrorCode> {
+        match size {
+            VariableSize::Byte => {
+                self.set_byte(self.stack_pointer, value as u8)?;
+                self.stack_pointer += 1;
+            }
+            VariableSize::Word => {
+                self.set_word(self.stack_pointer, value as u16)?;
+                self.stack_pointer += 2;
+            },
+            VariableSize::DoubleWord => {
+                self.set_dword(self.stack_pointer, value)?;
+                self.stack_pointer += 4;
+            }
+        }
+        Ok(())
+    }
 
-    pub fn save_variable(&mut self, variable_name: String, data: &[u32], stack_pointer: usize, size: VariableSize) -> Result<(), ErrorCode> {
+    pub fn pop_from_stack(&mut self, size: VariableSize) -> Result<u32, ErrorCode> {
+        let result = match size {
+            VariableSize::Byte => {
+                let value = self.get_byte(self.stack_pointer)? as u32;
+                self.stack_pointer -= 1;
+                value
+            },
+            VariableSize::Word => {
+                let value = self.get_word(self.stack_pointer)? as u32;
+                self.stack_pointer -= 2;
+                value
+            },
+            VariableSize::DoubleWord => {
+                let value = self.get_dword(self.stack_pointer)?;
+                self.stack_pointer -= 4;
+                value
+            }
+        };
+        Ok(result)
+    }
+    pub fn save_variable(&mut self, variable_name: String, data: &[u32], size: VariableSize) -> Result<(), ErrorCode> {
         let multiplier = size.value();
 
         let length = data.len() * multiplier;
+
         if self.variable_pointers.get(&variable_name).is_some() {
             return Err(ErrorCode::VariableAlreadyExists);
         }
-        if let Ok(location) = self.find_free_block(length, stack_pointer) {
+        if let Ok(location) = self.find_free_block(length) {
             // Save the metadata with the correct start_index
             println!("[SAVED] Saved variable {} @ {}\n", variable_name, location);
             self.variable_pointers.insert(variable_name, VariableMetadata::new(
@@ -57,7 +102,6 @@ impl MemoryManager {
             ));
 
             // Copy data to the found location
-
             for (i, &byte) in data.iter().enumerate() {
                 match size {
                     VariableSize::Byte => self.memory[location + i] = byte as u8,
@@ -83,19 +127,20 @@ impl MemoryManager {
             ))
         }
     }
-
-    pub fn find_free_block(&mut self, length: usize, stack_pointer: usize) -> Result<usize, ErrorCode> {
+    fn get_code_segment_displacement(&self) -> usize {
+        self.segments[1]
+    }
+    pub fn find_free_block(&mut self, length: usize) -> Result<usize, ErrorCode> {
         let mut start_index = 0;
 
-        // Iterate over the variable pointers hashmap
+        // If there's no variables yet, return the first available space    
         if self.variable_pointers.len() == 0 {
             return Ok(0);
         }
 
-        // Step 1: Collect entries into a vector
+        // Iterate over the variable pointers hashmap
         let mut entries: Vec<_> = self.variable_pointers.iter().collect();
-
-        // Step 2: Sort entries by start_index of VariableMetadata
+        // Sort to guarantee consistent results
         entries.sort_by_key(|(_, metadata)| metadata.start_index);
 
 
@@ -116,7 +161,7 @@ impl MemoryManager {
 
         }
 
-        if start_index + length < stack_pointer  {
+        if start_index + length < self.get_code_segment_displacement()  {
             return Ok(start_index);
         }
         
@@ -141,6 +186,11 @@ impl MemoryManager {
     }
 
     pub fn get_register_value(&self, registers: &[Register; 8], name: &str) -> Option<u16> {
+
+        if get_register_size(name).is_none() {
+            return None;
+        }
+
         let value = registers[get_register(name)].get_word();
 
         match name {
@@ -156,7 +206,7 @@ impl MemoryManager {
     Effective Address=Base+(Index*Scale)+Displacement
 
      */
-    pub fn calculate_effective_address(&self, mem_operand: &str, registers: &[Register; 8], label_vars: bool) -> Result<usize, ErrorCode> {
+    pub fn calculate_effective_address(&self, mem_operand: &str, registers: &[Register; 8], labels: &HashMap<String, usize>, label_vars: bool) -> Result<usize, ErrorCode> {
         // Ensure the memory operand is valid and remove the square brackets
         if !self.is_memory_operand(mem_operand) {
             return Err(ErrorCode::InvalidPointer("Memory Operand must be enveloped in []".to_string()));
@@ -199,7 +249,7 @@ impl MemoryManager {
                 };
     
             // Handle displacement, hexadecimal values, or variable names
-            } else if let Some(value) = self.parse_value(part, is_negative, registers, label_vars) {
+            } else if let Some(value) = self.parse_value(part, is_negative, registers, labels, label_vars) {
                 effective_address += value;
             } else {
                 return Err(ErrorCode::InvalidRegister);
@@ -214,7 +264,7 @@ impl MemoryManager {
         Ok(effective_address as usize)
     }
     
-    pub fn parse_value(&self, part: &str, is_negative: bool, registers: &[Register; 8], label_vars: bool) -> Option<isize> {
+    pub fn parse_value(&self, part: &str, is_negative: bool, registers: &[Register; 8], labels: &HashMap<String, usize>, label_vars: bool) -> Option<isize> {
     
         if let Some(value) = parse_string_to_usize(part) {
             if is_negative {
@@ -249,6 +299,8 @@ impl MemoryManager {
             } else {
                 Some(v as isize)
             }
+        } else if let Some(v) = labels.get(part) {
+                return Some(*v as isize);
         } else {
             None
         }
@@ -258,8 +310,8 @@ impl MemoryManager {
         self.check_memory_address(index)?;
         self.memory[index] = value;
         Ok(())
-
     }
+
     pub fn set_word(&mut self, index: usize, value: u16) -> Result<(), ErrorCode> {        
         self.check_memory_address(index)?; // Lower Bound
         self.check_memory_address(index+1)?; // Upper Bound

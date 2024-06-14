@@ -2,7 +2,6 @@ use std::{
     io,
     collections::{HashMap, HashSet},
 };
-use std::env;
 use crate::{
     error_code::ErrorCode,
     flag::Flag,
@@ -28,13 +27,14 @@ use crate::{
     command::Command
 };
 
+const MEMORY_SIZE: usize = 1024 * 16; // 16 KB
+
 
 pub struct Engine {
     lines: LineProcessor, // lines of source code (.txt)
     pub registers: [Register; 8], // A-D, ESI, EDI, P
     memory_manager: MemoryManager, // 16 KB bytes of memory
     // mode: bool, // false = reading data, true = reading code
-    stack_pointer: usize, // pointer to the top of the stack within memory,
     labels: HashMap<String, usize>, // labels to jump to
     // status: Status, // status: ok, error, halted,
     valid_registers: HashSet<String>,
@@ -55,22 +55,22 @@ impl Engine {
             Register::new("IP"),
             Register::new("FLAG"),
         ];
-        const MEMORY_SIZE: usize = 1024 * 16; // 16 KB
 
-        let valid_registers: HashSet<String> = [
-            "AX", "BX", "CX", "DX", "ESI", "EDI", "IP", "FLAG",
+        let ds = 0 as usize;         // DATA SEGMENT starts at 0
+        let cs = 1024 * 3 as usize;  // CODE SEGMENT starts at 3072 
+        let ss: usize = MEMORY_SIZE - 1024; // STACK SEGMENT, starts at 15360 (1024*15)
+
+        let valid_registers: HashSet<String> = [         
+            "AX", "BX", "CX", "DX", "SI", "DI", "IP", "FLAG", "BP", "SP",
             "AL", "AH", "BL", "BH", "CL", "CH", "DL", "DH",
-            "EAX", "EBX", "ECX", "EDX",
+            "EAX", "EBX", "ECX", "EDX", "ESI", "EDI",  "EBP", "ESP"
         ].iter().cloned().map(String::from).collect();
             Ok(Self {
                 lines: LineProcessor::new(file_lines),
                 registers: my_registers,
-                memory_manager: MemoryManager::new(MEMORY_SIZE),
-                stack_pointer: MEMORY_SIZE-1, // Initialize stack pointer to the end of memory
+                memory_manager: MemoryManager::new(MEMORY_SIZE, [ds, cs, ss]),
                 labels: HashMap::new(),
-                // status: Status::Ok,
                 valid_registers,
-                // Interrupt.new(),
             })
     }
 
@@ -135,7 +135,7 @@ impl Engine {
             ["BYTE", "PTR", arg] => (Some(VariableSize::Byte), *arg),
             ["WORD", "PTR", arg] => (Some(VariableSize::Word), *arg),
             ["DWORD", "PTR", arg] => (Some(VariableSize::DoubleWord), *arg),
-            [arg] if self.memory_manager.is_memory_operand(*arg) => {
+            [arg] => {
 
                 if let Ok((_, size)) = self.parse_value_from_parameter(*arg, None) {
                     (Some(size), *arg)
@@ -143,7 +143,7 @@ impl Engine {
                     (None, *arg)
                 }
             }
-            _ => {(None, argument)}
+            _ => (None, argument)
         }
     }
 
@@ -177,7 +177,7 @@ impl Engine {
                 _ => return Err(ErrorCode::InvalidRegister) // Unreachable
             };
             Ok((value, assumed_size))
-        } else if let Ok(parsed_address) = self.memory_manager.calculate_effective_address(parameter, &self.registers, true) {
+        } else if let Ok(parsed_address) = self.memory_manager.calculate_effective_address(parameter, &self.registers, &self.labels, true) {
    
             // Memory (adjust size to pointer size)
             let memory_address_str = parameter.to_string();
@@ -187,7 +187,10 @@ impl Engine {
             if size.is_none() {
                 if let Some(metadata) = self.memory_manager.get_variable(&memory_address_str[1..memory_address_str.len()-1]) {
                     size = Some(metadata.size);
+                } else if let Some(_) = self.labels.get(&memory_address_str[1..memory_address_str.len()-1]) {
+                    size = Some(VariableSize::Word);
                 }
+                
             }
 
             match size {
@@ -209,9 +212,8 @@ impl Engine {
         }
     }
 
-    pub fn execute(&mut self) -> Result<(), ErrorCode>{
+    pub fn execute(&mut self, verbose: bool) -> Result<(), ErrorCode>{
         // Go over code to get all the labels.
-        
         loop {
             let maybe_arguments = self.lines.next(&mut self.registers[get_register("IP")], false);
 
@@ -233,10 +235,7 @@ impl Engine {
         self.lines.set_ip(0);
 
         loop {
-            let cmd_arg: Vec<String> = env::args().collect();
-
             // Check if the verbose flag is set
-            let verbose = cmd_arg.iter().any(|arg| arg == "--verbose=true");            
             
             let maybe_arguments = self.lines.next(&mut self.registers[get_register("IP")], verbose);
 
@@ -298,7 +297,7 @@ impl Engine {
                     let inc = *op == "inc";
                     let size = size_option.unwrap_or(VariableSize::Byte);
                     // Calculate effective address
-                    match self.memory_manager.calculate_effective_address(memory_address_str, &self.registers, true) {
+                    match self.memory_manager.calculate_effective_address(memory_address_str, &self.registers, &self.labels, true) {
                         Ok(parsed_address) => {
                             let (current, overflowed) = match size {
                                 VariableSize::Byte => {
@@ -354,7 +353,7 @@ impl Engine {
                 },
 
                 ["lea", reg, memory_address] if self.is_valid_register(*reg) && self.memory_manager.is_memory_operand(memory_address) => {
-                    match self.memory_manager.calculate_effective_address(memory_address, &self.registers, true) {
+                    match self.memory_manager.calculate_effective_address(memory_address, &self.registers, &self.labels, true) {
                         Ok(parsed_address) => {
                             // Determine the register size
                             match get_register_size(*reg) {
@@ -414,7 +413,7 @@ impl Engine {
                     
 
                     // Calculate effective address of destination            
-                    match self.memory_manager.calculate_effective_address(sliced_memory_string, &self.registers, true) {
+                    match self.memory_manager.calculate_effective_address(sliced_memory_string, &self.registers, &self.labels, true) {
                         // Destination is valid address
                         Ok(parsed_address) => {
                             // Get value and size of memory to mov into destination address
@@ -453,10 +452,10 @@ impl Engine {
                 //         OP              REG          MEM/REG/CONST
                 [op @ ("add"|"sub"), reg, parameter] if self.is_valid_register(reg) => {
                     let is_addition = *op == "add";
-
-                    let (size_option, memory_address) = self.get_pointer_argument_size(parameter);
+                                                                // No "WORD PTR" etc.
+                    let (size_option, trimmed_parameter) = self.get_pointer_argument_size(parameter);
     
-                    let (constant, assumed_size)= self.parse_value_from_parameter(memory_address, size_option)?;
+                    let (constant, assumed_size)= self.parse_value_from_parameter(trimmed_parameter, size_option)?;
 
                     if let Some(reg_size) = get_register_size(reg) {
                         if assumed_size.value() != reg_size.value() {
@@ -482,7 +481,7 @@ impl Engine {
                     }
 
                     // Calculate effective address of destination            
-                    match self.memory_manager.calculate_effective_address(memory_address_str_dest, &self.registers, true) {
+                    match self.memory_manager.calculate_effective_address(memory_address_str_dest, &self.registers, &self.labels, true) {
                         // Destination is valid address
                         Ok(parsed_address) => {
                             // Get value and size of memory to mov into destination address
@@ -590,7 +589,7 @@ impl Engine {
 
                     let (size_option_src, trimmed_address) = self.get_pointer_argument_size(memory_address);
                     let size = size_option_src.unwrap_or(VariableSize::Byte);
-                    if let Ok(parsed_address) = self.memory_manager.calculate_effective_address(trimmed_address, &self.registers, true) {
+                    if let Ok(parsed_address) = self.memory_manager.calculate_effective_address(trimmed_address, &self.registers, &self.labels, true) {
                         if let Some(value) = parse_string_to_usize(*number) {
 
                             self.memory_manager.check_memory_address(parsed_address+value*size.value())?;
@@ -631,7 +630,6 @@ impl Engine {
                         "dd" => VariableSize::DoubleWord,
                         _ => return Err(ErrorCode::InvalidValue("Invalid Variable Size".to_string()))
                     };
-
                     let mut bytes: Vec<u32> = Vec::new();
 
                     for (_, &arg) in rest.iter().enumerate() {
@@ -646,6 +644,8 @@ impl Engine {
                                 // Handle other cases (numeric values, etc.)
                                 if let Some(value) = parse_string_to_usize(arg) {
                                     bytes.push(value as u32);
+                                } else {
+                                    return Err(ErrorCode::InvalidValue(format!("Could not parse {arg}")));
                                 }
                             }
                         } else {
@@ -653,12 +653,12 @@ impl Engine {
                             if let Some(value) = parse_string_to_usize(arg) {
                                 bytes.push(value as u32);                   
                             } else {
-                                return Err(ErrorCode::InvalidValue(format!("Could not save {:?}", bytes)));
+                                return Err(ErrorCode::InvalidValue(format!("Could not parse {arg}")));
                             }
                         }
                     }
 
-                    if let Err(error) = self.memory_manager.save_variable(variable_name.to_string(), &bytes, self.stack_pointer, size) {
+                    if let Err(error) = self.memory_manager.save_variable(variable_name.to_string(), &bytes, size) {
                         
                         return Err(error);
                     }
@@ -782,11 +782,11 @@ impl Engine {
                     
                         // Process first operand
                         if self.memory_manager.is_memory_operand(&arg1) {
-                            match self.memory_manager.calculate_effective_address(&arg1, &self.registers, false) {
+                            match self.memory_manager.calculate_effective_address(&arg1, &self.registers, &self.labels, false) {
                                 Ok(value) => first_value = value as isize,
                                 Err(error) => return Err(error),
                             }
-                        } else if let Some(v) = self.memory_manager.parse_value(&arg1, is_negative_first, &self.registers, false) {
+                        } else if let Some(v) = self.memory_manager.parse_value(&arg1, is_negative_first, &self.registers, &self.labels, false) {
                             first_value = v as isize;
                         } else {
                             return Err(ErrorCode::InvalidValue(format!("Could not parse {}", first_operand)));
@@ -794,11 +794,11 @@ impl Engine {
                     
                         // Process second operand
                         if self.memory_manager.is_memory_operand(&arg2) {
-                            match self.memory_manager.calculate_effective_address(&arg2, &self.registers, false) {
+                            match self.memory_manager.calculate_effective_address(&arg2, &self.registers, &self.labels, false) {
                                 Ok(value) => second_value = value as isize,
                                 Err(error) => return Err(error),
                             }
-                        } else if let Some(v) = self.memory_manager.parse_value(&arg2, is_negative_second, &self.registers, false) {
+                        } else if let Some(v) = self.memory_manager.parse_value(&arg2, is_negative_second, &self.registers, &self.labels, false) {
                             second_value = v as isize;
                         } else {
                             return Err(ErrorCode::InvalidValue(format!("Could not parse {}", second_operand)));
@@ -811,8 +811,52 @@ impl Engine {
                         self.set_flag(Flag::Sign, first_value - second_value < 0);
 
                 }
+                ["push", parameter] => {
+                    // No "WORD PTR" etc.
 
-                [label] => if self.labels.get(*label).is_some() {}
+                    let (size_option, trimmed_parameter) = self.get_pointer_argument_size(parameter);
+
+                    let (value, size) = self.parse_value_from_parameter(trimmed_parameter, size_option)?;
+                    self.memory_manager.push_to_stack(value, size)?;
+
+                },
+                ["pop", parameter] => {
+                    // No "WORD PTR" etc.
+                    let (size_option, trimmed_parameter) = self.get_pointer_argument_size(parameter);
+
+                    let (_, size) = self.parse_value_from_parameter(trimmed_parameter, size_option)?;
+                    
+                    let popped_value = self.memory_manager.pop_from_stack(size)?;
+
+                    if self.is_valid_register(parameter) {
+                        match size {
+                            VariableSize::Byte => return Err(ErrorCode::InvalidValue("POP can only receive a 16-bit or 32-bit parameter.".to_string())),
+                            VariableSize::Word => self.registers[get_register(parameter)].load_word(popped_value as u16),
+                            VariableSize::DoubleWord => self.registers[get_register(parameter)].load_dword(popped_value),
+                        }
+                    } else {
+                        // Calculate effective address of destination            
+                        match self.memory_manager.calculate_effective_address(trimmed_parameter, &self.registers, &self.labels, true) {
+                            // Destination is valid address
+                            Ok(parsed_address) => {
+                                match size {
+                                    VariableSize::Byte =>  return Err(ErrorCode::InvalidValue("POP can only receive a 16-bit or 32-bit parameter.".to_string())),
+                                    VariableSize::Word => self.memory_manager.set_word(parsed_address, popped_value as u16)?,
+                                    VariableSize::DoubleWord => self.memory_manager.set_dword(parsed_address, popped_value)?,
+                                }
+                            },
+                            Err(error) => return Err(error)
+                        }
+                    }
+
+                },
+                [label] if label.ends_with(":") => {
+                    let no_colon = &label[..label.len()-1];
+                    // Found no label
+                    if self.labels.get(no_colon).is_none(){
+                        return Err(ErrorCode::InvalidOpcode);
+                    }
+                }
                 _ => {
                     println!("Unknown instruction: {:?}", arguments);
                     return Err(ErrorCode::InvalidOpcode);
@@ -828,9 +872,30 @@ impl Engine {
         if let Some(address) = self.labels.get(*label) {
             self.lines.set_ip(*address);
         } else {
-            return Err(ErrorCode::InvalidPointer(
-                format!("Label \"{}\" cannot be found.", label)
-            ));
+            let (size_option, trimmed) = self.get_pointer_argument_size(label);
+
+            if trimmed != *label {
+                return Err(ErrorCode::InvalidPointer(
+                    format!("Invalid Syntax.")
+                ));
+            }
+            
+            let target =  if self.memory_manager.is_memory_operand(label) {
+                self.memory_manager.calculate_effective_address(label, &self.registers, &self.labels, true)?
+                
+            } else {
+                let (a, _) = self.parse_value_from_parameter(label, size_option)?;
+                a as usize
+            };
+
+            if target > MEMORY_SIZE - 1 {
+                return Err(ErrorCode::InvalidPointer(
+                    format!("Target IP \"{}\" is outside of memory bounds.", target)
+                ));
+            }
+
+            self.lines.set_ip(target as usize);
+
         }
         Ok(())
     }

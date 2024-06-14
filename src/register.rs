@@ -70,7 +70,7 @@ pub fn get_register(name: &str) -> usize{
         "DI" => 5,
         "IP" => 6,   
         "FLAG" => 7,   
-        _ => panic!("Invalid register name: {}", name),
+        _ => 10,
     }
 }
 

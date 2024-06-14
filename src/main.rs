@@ -22,12 +22,17 @@ mod error_code;
 mod status;
 #[allow(dead_code)]
 mod utils;
+// #[allow(dead_code)]
+// mod compiler;
 
 fn main() -> io::Result<()>  {
     // Initialize the engine
     let mut assembly: Engine;
 
-    match Engine::new("code.txt") {
+    let file_path = std::env::args().skip(1).next().unwrap_or("code.txt".to_string());
+    let _verbose  = std::env::args().skip(2).next().unwrap_or("false".to_string()).to_lowercase();
+    let verbose = _verbose == "true".to_string() || _verbose == "t".to_string();
+    match Engine::new(&file_path) {
         Ok(v) => assembly = v,
         Err(_) => {
             println!("Could not parse file.");
@@ -36,7 +41,7 @@ fn main() -> io::Result<()>  {
     }
 
     // Execute the engine and handle any errors
-    match assembly.execute() {
+    match assembly.execute(verbose) {
         Ok(()) => {
             println!("Execution completed successfully.");
         }

@@ -1,5 +1,3 @@
-use std::str::FromStr;
-use crate::ErrorCode;
 pub enum Command {
     Mov,   
     /* Move data
@@ -492,41 +490,41 @@ Syntax:
     }
 }
 
-impl FromStr for Command {
-    type Err = ErrorCode;
+// impl FromStr for Command {
+//     type Err = ErrorCode;
 
-    fn from_str(s: &str) -> Result<Command, ErrorCode> {
-        match s.to_lowercase().as_str() {
-            "mov" => Ok(Command::Mov),
-            "push" => Ok(Command::Push),
-            "pop" => Ok(Command::Pop),
-            "add" => Ok(Command::Add),
-            "sub" => Ok(Command::Sub),
-            "lea" => Ok(Command::Lea),
-            "inc" => Ok(Command::Inc),
-            "dec" => Ok(Command::Dec),
-            "mul" => Ok(Command::Mul),
-            "div" => Ok(Command::Div),
-            "and" => Ok(Command::And),
-            "or" => Ok(Command::Or),
-            "xor" => Ok(Command::Xor),
-            "not" => Ok(Command::Not),
-            "neg" => Ok(Command::Neg),
-            "shl" => Ok(Command::Shl),
-            "shr" => Ok(Command::Shr),
-            "jmp" => Ok(Command::Jmp),
-            "je" => Ok(Command::Je),
-            "jne" => Ok(Command::Jne),
-            "jz" => Ok(Command::Jz),
-            "jnz" => Ok(Command::Jnz),
-            "jg" => Ok(Command::Jg),
-            "jge" => Ok(Command::Jge),
-            "jl" => Ok(Command::Jl),
-            "jle" => Ok(Command::Jle),
-            "cmp" => Ok(Command::Cmp),
-            "call" => Ok(Command::Call),
-            "ret" => Ok(Command::Ret),
-            _ => Err(ErrorCode::InvalidOpcode),
-        }
-    }
-}
+//     fn from_str(s: &str) -> Result<Command, ErrorCode> {
+//         match s.to_lowercase().as_str() {
+//             "mov" => Ok(Command::Mov),
+//             "push" => Ok(Command::Push),
+//             "pop" => Ok(Command::Pop),
+//             "add" => Ok(Command::Add),
+//             "sub" => Ok(Command::Sub),
+//             "lea" => Ok(Command::Lea),
+//             "inc" => Ok(Command::Inc),
+//             "dec" => Ok(Command::Dec),
+//             "mul" => Ok(Command::Mul),
+//             "div" => Ok(Command::Div),
+//             "and" => Ok(Command::And),
+//             "or" => Ok(Command::Or),
+//             "xor" => Ok(Command::Xor),
+//             "not" => Ok(Command::Not),
+//             "neg" => Ok(Command::Neg),
+//             "shl" => Ok(Command::Shl),
+//             "shr" => Ok(Command::Shr),
+//             "jmp" => Ok(Command::Jmp),
+//             "je" => Ok(Command::Je),
+//             "jne" => Ok(Command::Jne),
+//             "jz" => Ok(Command::Jz),
+//             "jnz" => Ok(Command::Jnz),
+//             "jg" => Ok(Command::Jg),
+//             "jge" => Ok(Command::Jge),
+//             "jl" => Ok(Command::Jl),
+//             "jle" => Ok(Command::Jle),
+//             "cmp" => Ok(Command::Cmp),
+//             "call" => Ok(Command::Call),
+//             "ret" => Ok(Command::Ret),
+//             _ => Err(ErrorCode::InvalidOpcode),
+//         }
+//     }
+// }

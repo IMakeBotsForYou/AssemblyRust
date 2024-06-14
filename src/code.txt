@@ -1,19 +1,17 @@
-a dd, 0
-b dd, 1
-c dd, 0
+a dd, 0, 1, 0
 
 mov CX, 10
 
 loop:
-   mov EAX, [a]
-   add EAX, [b]
-   mov [c], EAX
+   mov EAX, [a] ; automatically assumed to be DWORD PTR
+   add EAX, DWORD PTR [a+4]
+   mov DWORD PTR [a+8], EAX
 
-   mov EAX, [b]
+   mov EAX, DWORD PTR [a+4]
    mov [a], EAX
-   mov EAX, [c]
-   mov [b], EAX
-   print [c]
+   mov EAX, DWORD PTR [a+8]
+   mov DWORD PTR [a+4], EAX
+   print DWORD PTR [a+8]
    dec CX
-   jnz loop
+   jnz [loop-1]
 
