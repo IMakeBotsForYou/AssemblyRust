@@ -583,14 +583,14 @@ impl Engine {
                     // Determine size of the operand
 
                     let args: Vec<&str> = parameter.split_whitespace().collect();
-                    let trimmed_parameter = match args.as_slice() {
-                        ["char", value] => value,
-                        [value] => value,
-                        _ => return Err(ErrorCode::InvalidOpcode)
+                    let trimmed_parameter = if args[0] == "char" {
+                        args[1..].join(" ")
+                    } else {
+                        args.join(" ")
                     };
 
 
-                    let (size, memory_address_str_src) = self.get_pointer_argument_size(trimmed_parameter);
+                    let (size, memory_address_str_src) = self.get_pointer_argument_size(&trimmed_parameter);
                     let (src_value, _) = self.parse_value_from_parameter(memory_address_str_src, size)?;
 
                     if args.len() == 2{
@@ -623,14 +623,15 @@ impl Engine {
                             self.memory_manager.check_memory_address(parsed_address+value*size.value())?;
 
                             let ip = self.registers[get_register("IP")].get_word();
-                            print!("[PRINT]@[IP={ip}] [{parsed_address}..{}]: [ ", parsed_address+value-1);
+                            print!("[PRINT]@[IP={ip}] [{parsed_address}..{}]: [", parsed_address+value-1);
                             for i in 0..value {
                                 match size {
                                     VariableSize::Byte => {
                                         let src_value = self.memory_manager.get_byte(parsed_address+i*size.value())?;
+
                                         if ch {
                                             if let Some(src_value_char) = std::char::from_u32(src_value as u32) {
-                                                print!("{0} ", src_value_char);
+                                                print!("{0}", src_value_char);
                                             } else {
                                                 print!("{0} ", src_value);
                                             }
@@ -642,7 +643,7 @@ impl Engine {
                                         let src_value = self.memory_manager.get_word(parsed_address+i*size.value())?;
                                         if ch {
                                             if let Some(src_value_char) = std::char::from_u32(src_value as u32) {
-                                                print!("{0} ", src_value_char);
+                                                print!("{0}", src_value_char);
                                             } else {
                                                 print!("{0} ", src_value);
                                             }
@@ -654,7 +655,7 @@ impl Engine {
                                         let src_value = self.memory_manager.get_dword(parsed_address+i*size.value())?;
                                         if ch {
                                             if let Some(src_value_char) = std::char::from_u32(src_value) {
-                                                print!("{0} ", src_value_char);
+                                                print!("{0}", src_value_char);
                                             } else {
                                                 print!("{0} ", src_value);
                                             }

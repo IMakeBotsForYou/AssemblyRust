@@ -1,9 +1,17 @@
-text db, 'ohh the misery', 0
-mov CX, 14
-loop:
-   sub [text+CX-1], 32
-   dec CX
-   jnz loop 
+a dd, 0, 1, 0
 
-print 14, char [text]
+mov CX, 10
+
+loop:
+   mov EAX, [a] ; automatically assumed to be DWORD PTR
+   add EAX, DWORD PTR [a+4]
+   mov DWORD PTR [a+8], EAX
+
+   mov EAX, DWORD PTR [a+4]
+   mov [a], EAX
+   mov EAX, DWORD PTR [a+8]
+   mov DWORD PTR [a+4], EAX
+   print DWORD PTR [a+8]
+   dec CX
+   jnz loop
 
