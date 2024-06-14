@@ -466,7 +466,7 @@ impl Engine {
                 },
 
                 //         OP               MEM          REG/CONST
-                [op @ ("add"|"sub"), memory_address, parameter] if self.memory_manager.is_memory_operand(memory_address) => {
+                [op @ ("add"|"sub"), memory_address, parameter] => {
                     let is_addition = *op == "add";
 
                     if self.memory_manager.is_memory_operand(parameter) {
@@ -476,9 +476,14 @@ impl Engine {
                     let (size_option_src, _) = self.get_pointer_argument_size(parameter);
                     let (size_option_dest, memory_address_str_dest) = self.get_pointer_argument_size(memory_address);
 
-                    if size_option_src != size_option_dest {
-                        return Err(ErrorCode::InvalidPointer("Source and destination size don't match.".to_string()))
+                    if size_option_src.is_some() && size_option_dest.is_some() {
+                        let a = size_option_src.unwrap().value();
+                        let b = size_option_dest.unwrap().value();
+                        if a > b {
+                            return Err(ErrorCode::InvalidPointer(format!("Source size {:?} can't fit in destination size {:?}.", size_option_src ,size_option_dest)))
+                        }
                     }
+
 
                     // Calculate effective address of destination            
                     match self.memory_manager.calculate_effective_address(memory_address_str_dest, &self.registers, &self.labels, true) {
@@ -493,6 +498,7 @@ impl Engine {
                             let eax: u32 = self.get_register_value("EAX")?;
                             // Load constant into EAX
                             self.registers[get_register("EAX")].load_dword(constant);
+
                             match assumed_size {
                                 VariableSize::Byte => self.add_or_sub_mem_reg(parsed_address, "AL", is_addition)?,
                                 VariableSize::Word =>  self.add_or_sub_mem_reg(parsed_address, "AX", is_addition)?,
@@ -576,16 +582,38 @@ impl Engine {
                 ["print", parameter] => { // if self.memory_manager.is_memory_operand(memory_address) => {
                     // Determine size of the operand
 
-                    let (size, memory_address_str_src) = self.get_pointer_argument_size(parameter);
+                    let args: Vec<&str> = parameter.split_whitespace().collect();
+                    let trimmed_parameter = match args.as_slice() {
+                        ["char", value] => value,
+                        [value] => value,
+                        _ => return Err(ErrorCode::InvalidOpcode)
+                    };
+
+
+                    let (size, memory_address_str_src) = self.get_pointer_argument_size(trimmed_parameter);
                     let (src_value, _) = self.parse_value_from_parameter(memory_address_str_src, size)?;
 
-                    println!("[PRINT]@[IP={ip}] {parameter}: {0}\n", src_value);
-
+                    if args.len() == 2{
+                        if let Some(src_value_char) = std::char::from_u32(src_value) {
+                            println!("[PRINT]@[IP={ip}] {parameter}: {0}\n", src_value_char);
+                        }
+                    } else {
+                        println!("[PRINT]@[IP={ip}] {parameter}: {0}\n", src_value);
+                    }            
                 },
 
 
-                ["print", number, memory_address]  => { //if self.memory_manager.is_memory_operand(memory_address) &&
+                ["print", number, memory_address_maybe_ch]  => { //if self.memory_manager.is_memory_operand(memory_address) &&
                                                                                             //parse_string_to_usize(*number).is_some() => {
+
+                    let args: Vec<&str> = memory_address_maybe_ch.split_whitespace().collect();
+
+                    let (ch, memory_address) = match args.as_slice() {
+                        ["char", address] => (true, *address),
+                        [address] => (false, *address),
+                        _ => return Err(ErrorCode::InvalidOpcode)
+                    };
+
 
                     let (size_option_src, trimmed_address) = self.get_pointer_argument_size(memory_address);
                     let size = size_option_src.unwrap_or(VariableSize::Byte);
@@ -599,13 +627,40 @@ impl Engine {
                             for i in 0..value {
                                 match size {
                                     VariableSize::Byte => {
-                                        print!("{0} ", self.memory_manager.get_byte(parsed_address+i*size.value())?);
+                                        let src_value = self.memory_manager.get_byte(parsed_address+i*size.value())?;
+                                        if ch {
+                                            if let Some(src_value_char) = std::char::from_u32(src_value as u32) {
+                                                print!("{0} ", src_value_char);
+                                            } else {
+                                                print!("{0} ", src_value);
+                                            }
+                                        } else {
+                                            print!("{0} ", src_value);
+                                        }
                                     },
                                     VariableSize::Word => {
-                                        print!("{0} ", self.memory_manager.get_word(parsed_address+i*size.value())?);
+                                        let src_value = self.memory_manager.get_word(parsed_address+i*size.value())?;
+                                        if ch {
+                                            if let Some(src_value_char) = std::char::from_u32(src_value as u32) {
+                                                print!("{0} ", src_value_char);
+                                            } else {
+                                                print!("{0} ", src_value);
+                                            }
+                                        } else {
+                                            print!("{0} ", src_value);
+                                        }                                    
                                     },
                                     VariableSize::DoubleWord => {
-                                        print!("{0} ", self.memory_manager.get_dword(parsed_address+i*size.value())?);
+                                        let src_value = self.memory_manager.get_dword(parsed_address+i*size.value())?;
+                                        if ch {
+                                            if let Some(src_value_char) = std::char::from_u32(src_value) {
+                                                print!("{0} ", src_value_char);
+                                            } else {
+                                                print!("{0} ", src_value);
+                                            }
+                                        } else {
+                                            print!("{0} ", src_value);
+                                        }  
                                     },
 
                                 }
@@ -946,9 +1001,7 @@ impl Engine {
                 } else {
                     dest_value.overflowing_sub(src_value)
                 };
-
                 self.memory_manager.set_byte(memory_address, sum)?;
-
 
                 (sum as u32, overflowed, VariableSize::Byte)
             },

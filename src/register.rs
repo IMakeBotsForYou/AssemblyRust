@@ -16,10 +16,10 @@ impl Register {
     pub fn get_byte(&self, top: bool) -> u8 {
         if top {
             // return H
-            (self.value >> 24) as u8
+            ((self.value & 0x0000FF00) >> 8) as u8
         } else {
             // return L
-            (self.value << 16 >> 24) as u8   
+            (self.value & 0x0000000FF) as u8
         }
     }
 
@@ -70,7 +70,7 @@ pub fn get_register(name: &str) -> usize{
         "DI" => 5,
         "IP" => 6,   
         "FLAG" => 7,   
-        _ => 10,
+        _ => panic!("Invalid register name: {}", name),
     }
 }
 
