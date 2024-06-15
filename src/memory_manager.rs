@@ -203,7 +203,7 @@ impl MemoryManager {
     /* 
     Effective Address calculation follows this format:
 
-    Effective Address=Base+(Index*Scale)+Displacement
+    Effective Address=Base+(Index*Scale)+Displacement
 
      */
     pub fn calculate_effective_address(&self, mem_operand: &str, registers: &[Register; 8], labels: &HashMap<String, usize>, label_vars: bool) -> Result<usize, ErrorCode> {
@@ -360,6 +360,8 @@ impl MemoryManager {
             (self.memory[index+2] as u32) << 8 |
             (self.memory[index+3] as u32)
         )
-        
+    }
+    pub fn _get_memory(&self, start_index: usize, amount: usize) -> Vec<u8> {
+        self.memory[start_index..amount+start_index].to_vec()
     }
 }

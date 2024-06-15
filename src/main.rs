@@ -47,19 +47,20 @@ fn main() -> io::Result<()>  {
         }
         Err(error) => {
             let ip = assembly.get_register_value("IP").unwrap_or_default();
-            match error {
-                ErrorCode::DivisionByZero => println!("Division By Zero error. Halted at {}", ip),
-                ErrorCode::StackOverflow => println!("Stack Overflow error. Halted at {}", ip),
-                ErrorCode::StackUnderflow => println!("Stack Underflow error. Halted at {}", ip),
-                ErrorCode::InvalidOpcode => println!("Invalid Opcode. Halted at {}", ip),
-                ErrorCode::InvalidRegister => println!("Invalid Register. Halted at {}", ip),
-                ErrorCode::VariableAlreadyExists => println!("Attempted to save variable/label that already exists. Halted at {}", ip),
-                ErrorCode::UnknownVariable => println!("Unknown Variable. Halted at {}", ip),
-                ErrorCode::Overflow => println!("Overflow. Halted at {}", ip),
-                ErrorCode::InvalidPointer(msg) => println!("Invalid Pointer. Halted at {}. {}", ip, msg),
-                ErrorCode::NotEnoughSpace(msg) => println!("Not enough space to store variable. Halted at {}. {}", ip, msg),
-                ErrorCode::InvalidValue(msg) => println!("Invalid value. Halted at {}. {}", ip, msg),
-            }
+            println!("\n{}.\nHalted at {}.\n", error, ip)
+            // match error {
+            //     ErrorCode::DivisionByZero => println!("Division By Zero error. Halted at {}", ip),
+            //     ErrorCode::StackOverflow => println!("Stack Overflow error. Halted at {}", ip),
+            //     ErrorCode::StackUnderflow => println!("Stack Underflow error. Halted at {}", ip),
+            //     ErrorCode::InvalidOpcode => println!("Invalid Opcode. Halted at {}", ip),
+            //     ErrorCode::InvalidRegister => println!("Invalid Register. Halted at {}", ip),
+            //     ErrorCode::VariableAlreadyExists => println!("Attempted to save variable/label that already exists. Halted at {}", ip),
+            //     ErrorCode::UnknownVariable => println!("Unknown Variable. Halted at {}", ip),
+            //     ErrorCode::Overflow => println!("Overflow. Halted at {}", ip),
+            //     ErrorCode::InvalidPointer(msg) => println!("Invalid Pointer. Halted at {}. {}", ip, msg),
+            //     ErrorCode::NotEnoughSpace(msg) => println!("Not enough space to store variable. Halted at {}. {}", ip, msg),
+            //     ErrorCode::InvalidValue(msg) => println!("Invalid value. Halted at {}. {}", ip, msg),
+            // }
         }
     }
 

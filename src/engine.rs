@@ -77,6 +77,10 @@ impl Engine {
     fn is_valid_register(&self, reg_to_check: &str) -> bool {
         self.valid_registers.contains(reg_to_check)
     }
+    // Only used for tests
+    pub fn get_memory(&self, amount: usize) -> Vec<u8> {
+        self.memory_manager._get_memory(0, amount)
+    }
 
     pub fn get_register_value(&self, name: &str) -> Result<u32, ErrorCode> {
         if !self.is_valid_register(name) {
@@ -84,10 +88,10 @@ impl Engine {
         }
         let value = self.registers[get_register(name)].get_dword();
         match name {
-            "AL" | "BL" | "CL" | "DL" => Ok(value & 0x000000FF),
-            "AH" | "BH" | "CH" | "DH" => Ok((value & 0x0000FF00) >> 8),
-            "FLAG" | "AX" | "BX" | "CX" | "DX"  => Ok(value & 0x0000FFFF), 
-            "ESI" | "EDI" | "IP" | "EAX" | "EBX" | "ECX" | "EDX"  => Ok(value), 
+            "AL"   | "BL"  | "CL" | "DL" => Ok(value & 0x000000FF),
+            "AH"   | "BH"  | "CH" | "DH" => Ok((value & 0x0000FF00) >> 8),
+            "FLAG" | "AX"  | "BX" | "CX"  | "DX"  => Ok(value & 0x0000FFFF), 
+            "ESI"  | "EDI" | "IP" | "EAX" | "EBX" | "ECX" | "EDX"  => Ok(value), 
             _ => Err(ErrorCode::InvalidRegister)
         }
     }
@@ -98,7 +102,6 @@ impl Engine {
 
         if result.count_ones() % 2 == 0 {
             self.set_flag(Flag::Parity, true);
-
         }
 
         // Set Zero Flag
@@ -623,7 +626,7 @@ impl Engine {
                             self.memory_manager.check_memory_address(parsed_address+value*size.value())?;
 
                             let ip = self.registers[get_register("IP")].get_word();
-                            print!("[PRINT]@[IP={ip}] [{parsed_address}..{}]: [", parsed_address+value-1);
+                            print!("[PRINT]@[IP={ip}][{parsed_address}..{}]:\t[", parsed_address+value-1);
                             for i in 0..value {
                                 match size {
                                     VariableSize::Byte => {
@@ -633,10 +636,10 @@ impl Engine {
                                             if let Some(src_value_char) = std::char::from_u32(src_value as u32) {
                                                 print!("{0}", src_value_char);
                                             } else {
-                                                print!("{0} ", src_value);
+                                                print!("{}", format!("{: >width$}", src_value, width=4));
                                             }
                                         } else {
-                                            print!("{0} ", src_value);
+                                            print!("{}", format!("{: >width$}", src_value, width=4));
                                         }
                                     },
                                     VariableSize::Word => {
@@ -645,10 +648,10 @@ impl Engine {
                                             if let Some(src_value_char) = std::char::from_u32(src_value as u32) {
                                                 print!("{0}", src_value_char);
                                             } else {
-                                                print!("{0} ", src_value);
+                                                print!("{}", format!("{: >width$}", src_value, width=4));
                                             }
                                         } else {
-                                            print!("{0} ", src_value);
+                                            print!("{}", format!("{: >width$}", src_value, width=4));
                                         }                                    
                                     },
                                     VariableSize::DoubleWord => {
@@ -816,57 +819,49 @@ impl Engine {
 
                 
                 ["cmp", first_operand, second_operand] => {
-                        // Determine if operands are negative (assuming they start with '-')
-                        let is_negative_first = first_operand.starts_with("-");
-                        let is_negative_second = second_operand.starts_with("-");
+                    // Determine if operands are negative (assuming they start with '-')
+                    // let is_negative_first = first_operand.starts_with("-");
+                    // let is_negative_second = second_operand.starts_with("-");
+                
+                    // let arg1 = if is_negative_first {
+                    //     first_operand[1..].to_string()
+                    // } else {
+                    //     first_operand.to_string()
+                    // };
                     
-                        let arg1 = if is_negative_first {
-                            first_operand[1..].to_string()
-                        } else {
-                            first_operand.to_string()
-                        };
-                        
-                        let arg2 = if is_negative_second {
-                            second_operand[1..].to_string()
-                        } else {
-                            second_operand.to_string()
-                        };
-                    
-                        // Initialize variables to store parsed values
-                        let first_value: isize;
-                        let second_value: isize;
-                    
-                        // Process first operand
-                        if self.memory_manager.is_memory_operand(&arg1) {
-                            match self.memory_manager.calculate_effective_address(&arg1, &self.registers, &self.labels, false) {
-                                Ok(value) => first_value = value as isize,
-                                Err(error) => return Err(error),
-                            }
-                        } else if let Some(v) = self.memory_manager.parse_value(&arg1, is_negative_first, &self.registers, &self.labels, false) {
-                            first_value = v as isize;
-                        } else {
-                            return Err(ErrorCode::InvalidValue(format!("Could not parse {}", first_operand)));
-                        }
-                    
-                        // Process second operand
-                        if self.memory_manager.is_memory_operand(&arg2) {
-                            match self.memory_manager.calculate_effective_address(&arg2, &self.registers, &self.labels, false) {
-                                Ok(value) => second_value = value as isize,
-                                Err(error) => return Err(error),
-                            }
-                        } else if let Some(v) = self.memory_manager.parse_value(&arg2, is_negative_second, &self.registers, &self.labels, false) {
-                            second_value = v as isize;
-                        } else {
-                            return Err(ErrorCode::InvalidValue(format!("Could not parse {}", second_operand)));
-                        }
-                    
-                        // Set flags based on comparison results
-                        self.set_flag(Flag::Zero, first_value == second_value);
-                        self.set_flag(Flag::Carry, first_value < second_value);
-                        self.set_flag(Flag::Overflow, first_value > second_value);
-                        self.set_flag(Flag::Sign, first_value - second_value < 0);
+                    // let arg2 = if is_negative_second {
+                    //     second_operand[1..].to_string()
+                    // } else {
+                    //     second_operand.to_string()
+                    // };  
 
-                }
+                    let (first_size_option, trimmed_first_parameter) = self.get_pointer_argument_size(first_operand);
+                    let (first_operand_value, first_operand_size) = self.parse_value_from_parameter(trimmed_first_parameter, first_size_option)?;
+
+
+                    let (second_size_option, trimmed_second_parameter) = self.get_pointer_argument_size(second_operand);
+                    let (second_operand_value, second_operand_size) = self.parse_value_from_parameter(trimmed_second_parameter, second_size_option)?;
+
+
+                    if first_operand_size != second_operand_size {
+                        return Err(ErrorCode::InvalidValue(
+                                        format!("Target memory pointer size ({}) doesn't match second parameter size ({})",
+                                                         first_operand_size.value(),          second_operand_size.value())
+                                    ))
+                    }
+                    // Initialize variables to store parsed values
+                    let first_value = first_operand_value as isize;
+                    let second_value = second_operand_value as isize;
+
+                    let result = first_value - second_value;
+                    // Set flags based on comparison results
+                    self.set_flag(Flag::Zero, result == 0);
+                    self.set_flag(Flag::Carry, first_value < second_value);
+                    self.set_flag(Flag::Overflow, (first_value < 0 && second_value > 0 && result > 0) || (first_value > 0 && second_value < 0 && result < 0));
+                    self.set_flag(Flag::Sign, result < 0);
+                    self.set_flag(Flag::Parity, result.count_ones() % 2 == 0);
+                
+                },
                 ["push", parameter] => {
                     // No "WORD PTR" etc.
 

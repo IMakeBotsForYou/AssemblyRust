@@ -1,9 +1,13 @@
 text db, 'ohh the misery', 0
 mov CX, 14
+print 14, [text]
 loop:
+   cmp [text+CX-1], 32 ; space
+   je next
    sub [text+CX-1], 32
+next:
    dec CX
    jnz loop 
-
+print 14, [text]
 print 14, char [text]
 
