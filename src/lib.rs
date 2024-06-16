@@ -31,7 +31,8 @@ mod tests {
     	match result {
 	        Ok(_) => assert!(assembly.registers[0].get_word() == 89),
 	        Err(e) => {
-	            panic!("Errored during execution.\n{e}")
+				let ip = assembly.get_register_value("IP").expect("Couldn't get IP");
+	            panic!("Errored during execution.\n{}\nLINE: {} ", e, ip)
 	        },
     	}
     }
@@ -57,7 +58,8 @@ mod tests {
 	        	}
 	        }
 	        Err(e) => {
-	            panic!("Errored during execution.\n{e}")
+				let ip = assembly.get_register_value("IP").expect("Couldn't get IP");
+	            panic!("Errored during execution.\n{}\nLINE: {} ", e, ip)
 	        },
     	}
     }

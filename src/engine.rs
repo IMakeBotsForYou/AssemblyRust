@@ -5,14 +5,11 @@ use std::{
 use crate::{
     error_code::ErrorCode,
     flag::Flag,
-    line_processor::{
-        LineProcessor,
-        convert_vec_string_to_vec_str
-    },
     variable_metadata::{
         // VariableMetadata,
         VariableSize,
     },
+    line_processor::LineProcessor,
     memory_manager::MemoryManager,
     register::{
         get_register, 
@@ -218,704 +215,671 @@ impl Engine {
     pub fn execute(&mut self, verbose: bool) -> Result<(), ErrorCode>{
         // Go over code to get all the labels.
         loop {
-            let maybe_arguments = self.lines.next(&mut self.registers[get_register("IP")], false);
-
-            if maybe_arguments.is_none() {
+            let line_option = self.lines.next(false);
+            if line_option.is_none() {
                 break;
             }
-            let str_maybe_arguments = maybe_arguments.unwrap();
-            let arguments: Vec<&str> = convert_vec_string_to_vec_str(&str_maybe_arguments);
 
-            // Process the instruction based on the arguments
-            match arguments.as_slice() {
-                [label] if label.ends_with(":") && self.memory_manager.is_valid_variable_name(&label[..label.len()-1]) => {
-                    self.save_label(label[..label.len()-1].to_string())?;
-                },
-                _ => {},
+            if let Some(line) = line_option {
+                match line.as_slice() {
+                    [label] if label.ends_with(":") && self.memory_manager.is_valid_variable_name(&label[..label.len()-1]) => {
+                        let no_colon = label[..label.len()-1].to_string();
+                        if self.labels.get(&no_colon).is_some() {
+                            return Err(ErrorCode::InvalidPointer(format!("Label {no_colon} already exists")));
+                        }
+                        if let Err(error) = self.save_label(no_colon) {
+                            return Err(error);
+                        }
+                    },
+                    _ => {}
+                }
             }
+            self.lines.update_ip_register(&mut self.registers[get_register("IP")]);
         }
-
+        
         self.lines.set_ip(0);
 
         loop {
-            // Check if the verbose flag is set
-            
-            let maybe_arguments = self.lines.next(&mut self.registers[get_register("IP")], verbose);
+            let ip = self.registers[get_register("IP")].get_word() as usize;
+            let line_option = self.lines.next(verbose);
 
-            if maybe_arguments.is_none() {
+            if line_option.is_none() {
                 break;
             }
-
-            let str_maybe_arguments = maybe_arguments.unwrap();
-            let arguments: Vec<&str> = convert_vec_string_to_vec_str(&str_maybe_arguments);
-
-            let ip = self.registers[get_register("IP")].get_word();
-            // Process the instruction based on the arguments
-            match arguments.as_slice() {
-                    // size @ ("WORD" | "BYTE" | "DWORD"), "PTR", 
+            if let Some(line) = line_option {
+                let line_str: Vec<&str> = line.iter().map(|s| &**s).collect();
+                match line_str.as_slice() {
+                    // INC DEC 
                     [op @ ("inc" | "dec"), register] if self.is_valid_register(register) => {
-                    let inc = *op == "inc";
-                    let (result, overflowed) = match get_register_size(register).unwrap() {
-                        VariableSize::Byte => {
-                            let (value, overflowing) = if inc {
-                                (self.get_register_value(register)? as u8).overflowing_add(1)
+                        let inc = *op == "inc";
+                        let (result, overflowed) = match get_register_size(register).unwrap() {
+                            VariableSize::Byte => {
+                                let (value, overflowing) = if inc {
+                                    (self.get_register_value(register)? as u8).overflowing_add(1)
 
-                            } else {
-                                (self.get_register_value(register)? as u8).overflowing_sub(1)
-                            };
+                                } else {
+                                    (self.get_register_value(register)? as u8).overflowing_sub(1)
+                                };
 
-                            self.set_register_value(register, value as u32)?;
-                            (value as u32, overflowing)
-                        },
-                        VariableSize::Word => {
-                            let (value, overflowing) = if inc {
-                                (self.get_register_value(register)? as u16).overflowing_add(1)
+                                self.set_register_value(register, value as u32)?;
+                                (value as u32, overflowing)
+                            },
+                            VariableSize::Word => {
+                                let (value, overflowing) = if inc {
+                                    (self.get_register_value(register)? as u16).overflowing_add(1)
 
-                            } else {
-                                (self.get_register_value(register)? as u16).overflowing_sub(1)
-                            };
+                                } else {
+                                    (self.get_register_value(register)? as u16).overflowing_sub(1)
+                                };
 
-                            self.set_register_value(register, value as u32)?;
-                            (value as u32, overflowing)
-                        },
-                        VariableSize::DoubleWord => {
-                            let (value, overflowing) = if inc {
-                                (self.get_register_value(register)? as u32).overflowing_add(1)
+                                self.set_register_value(register, value as u32)?;
+                                (value as u32, overflowing)
+                            },
+                            VariableSize::DoubleWord => {
+                                let (value, overflowing) = if inc {
+                                    (self.get_register_value(register)? as u32).overflowing_add(1)
 
-                            } else {
-                                (self.get_register_value(register)? as u32).overflowing_sub(1)
-                            };
+                                } else {
+                                    (self.get_register_value(register)? as u32).overflowing_sub(1)
+                                };
 
-                            self.set_register_value(register, value)?;
-                            (value, overflowing)
-                        },
-
-                    };
+                                self.set_register_value(register, value)?;
+                                (value, overflowing)
+                            },
+                        };
                     self.set_flags(result as usize, get_register_size(register).unwrap(), overflowed)
-                },
-                [op @ ("inc" | "dec"), memory_address] if self.memory_manager.is_memory_operand(memory_address) => {
-                                    // Case with WORD/BYTE PTR
+                    },
+                    [op @ ("inc" | "dec"), memory_address] if self.memory_manager.is_memory_operand(memory_address) => {
+                                        // Case with WORD/BYTE PTR
 
-                    let (size_option, memory_address_str) = self.get_pointer_argument_size(memory_address);
-                    let inc = *op == "inc";
-                    let size = size_option.unwrap_or(VariableSize::Byte);
-                    // Calculate effective address
-                    match self.memory_manager.calculate_effective_address(memory_address_str, &self.registers, &self.labels, true) {
-                        Ok(parsed_address) => {
-                            let (current, overflowed) = match size {
-                                VariableSize::Byte => {
-                                    if inc {
-                                        let (cu8, o) = self.memory_manager.get_byte(parsed_address)?.overflowing_add(1);
-                                        (cu8 as u32, o)
-                                    } else {
-                                        let (cu8, o) = self.memory_manager.get_byte(parsed_address)?.overflowing_sub(1);
-                                        (cu8 as u32, o)
-                                    }
-                                },
-                                VariableSize::Word => {
-                                    if inc {
-                                        let (cu16, o) = self.memory_manager.get_word(parsed_address)?.overflowing_add(1);
-                                        (cu16 as u32, o)
-                                    } else {
-                                        let (cu16, o) = self.memory_manager.get_word(parsed_address)?.overflowing_sub(1);
-                                        (cu16 as u32, o)
-                                    }
-                                },
-                                VariableSize::DoubleWord => {
-                                    if inc {
-                                        let (cu16, o) = self.memory_manager.get_dword(parsed_address)?.overflowing_add(1);
-                                        (cu16 as u32, o)
-                                    } else {
-                                        let (cu16, o) = self.memory_manager.get_dword(parsed_address)?.overflowing_sub(1);
-                                        (cu16 as u32, o)
-                                    }
-                                }
-                            };
-                            
-                            self.set_flags(current as usize, size, overflowed);
-                            
-                            match size {
-                                VariableSize::Byte => self.memory_manager.set_byte(parsed_address, current as u8)?,
-                                VariableSize::Word => self.memory_manager.set_word(parsed_address, current as u16)?,
-                                VariableSize::DoubleWord => self.memory_manager.set_dword(parsed_address, current as u32)?,
-                            };
-                        },
-                        Err(error) => return Err(error),
-                    }
-                },
-
-                ["inc", _rest @ ..] => {
-                    println!("{}", Command::get_help_string(Command::Inc));
-                    
-                    return Err(ErrorCode::InvalidOpcode);
-                },
-                ["dec", _rest @ ..] => {
-                    println!("{}", Command::get_help_string(Command::Dec));
-                    
-                    return Err(ErrorCode::InvalidOpcode);
-                },
-
-                ["lea", reg, memory_address] if self.is_valid_register(*reg) && self.memory_manager.is_memory_operand(memory_address) => {
-                    match self.memory_manager.calculate_effective_address(memory_address, &self.registers, &self.labels, true) {
-                        Ok(parsed_address) => {
-                            // Determine the register size
-                            match get_register_size(*reg) {
-                                Some(VariableSize::Byte) => {
-                                    return Err(ErrorCode::NotEnoughSpace(
-                                        format!("Cannot store pointer in 1-byte register: {reg}."))
-                                    );
-                                },
-                                Some(VariableSize::Word)|Some(VariableSize::DoubleWord) => {
-                                    self.mov_reg_const(reg, parsed_address as u32)?;
-                                },
-                                _ => {
-                                    return Err(ErrorCode::InvalidRegister);
-                                },
-                            }
-                        },
-                        Err(error) => return Err(error),
-                    }
-                },
-                ["lea", _rest @ ..] => {
-                    println!("{}", Command::get_help_string(Command::Lea));
-                    
-                    return Err(ErrorCode::InvalidOpcode);
-                },
-                // MOV Instructions
-                // OP    REG      MEM/REG/CONST
-                ["mov", reg, parameter] if self.is_valid_register(*reg) => {
-                    let (size_option, memory_address) = self.get_pointer_argument_size(parameter);
-                    let (constant, assumed_size) = self.parse_value_from_parameter(memory_address, size_option)?;
-                    if let Some(reg_size) = get_register_size(reg) {
-                        if assumed_size.value() > reg_size.value() {
-                            return Err(ErrorCode::InvalidValue(format!("Value {parameter} cannot fit in {reg}")));
-                        }
-                    }
-                    self.mov_reg_const(reg, constant)?;
-
-                },
-                // OP       MEM               REG/CONST
-                ["mov", memory_address, parameter] => {
-
-                    if self.memory_manager.is_memory_operand(parameter) {
-                        return Err(ErrorCode::InvalidValue(format!("Direct memory transfer is not supported.")));
-                    }
-
-                    let (size_option_dst, _) = self.get_pointer_argument_size(parameter);
-
-
-                    let (size_option_src, sliced_memory_string) = self.get_pointer_argument_size(memory_address);
-
-                    if let Some(size_dst) = size_option_dst {
-                        if let Some(size_src) = size_option_src {
-                            if size_dst != size_src {
-                                return Err(ErrorCode::InvalidPointer(format!("Source ({parameter}) and destination ({memory_address}) size don't match.")));
-                            }
-                        }
-                    };
-                    
-
-                    // Calculate effective address of destination            
-                    match self.memory_manager.calculate_effective_address(sliced_memory_string, &self.registers, &self.labels, true) {
-                        // Destination is valid address
-                        Ok(parsed_address) => {
-                            // Get value and size of memory to mov into destination address
-                            let (constant, assumed_size_parameter ) = {
-                                let (v, s) = self.parse_value_from_parameter(parameter, size_option_src)?;
-                                (v, size_option_src.unwrap_or(s))
-                            };
-                            let (_, assumed_size_memory) = self.parse_value_from_parameter(sliced_memory_string, size_option_src)?; 
-                            if assumed_size_parameter != assumed_size_memory {
-                                return Err(
-                                    ErrorCode::InvalidValue(
-                                        format!("Target memory pointer size ({}) doesn't match second parameter size ({})",
-                                                         assumed_size_memory.value(),          assumed_size_parameter.value())
-                                    )
-                                );
-                            }
-                            
-                            match assumed_size_parameter {
-                                VariableSize::Byte => self.memory_manager.set_byte(parsed_address, constant as u8)?,
-                                VariableSize::Word => self.memory_manager.set_word(parsed_address, constant as u16)?,
-                                VariableSize::DoubleWord => self.memory_manager.set_dword(parsed_address, constant as u32)?,
-                            };
-                        },
-                        // Destination is not valid address
-                        Err(error) => return Err(error)
-                    }
-                },  
-                // HELP COMMAND
-                ["mov", _rest @ ..] => {
-                    println!("{}", Command::get_help_string(Command::Mov));
-                    
-                    return Err(ErrorCode::InvalidOpcode);
-                },
-
-                // ADD/SUB Instructions
-                //         OP              REG          MEM/REG/CONST
-                [op @ ("add"|"sub"), reg, parameter] if self.is_valid_register(reg) => {
-                    let is_addition = *op == "add";
-                                                                // No "WORD PTR" etc.
-                    let (size_option, trimmed_parameter) = self.get_pointer_argument_size(parameter);
-    
-                    let (constant, assumed_size)= self.parse_value_from_parameter(trimmed_parameter, size_option)?;
-
-                    if let Some(reg_size) = get_register_size(reg) {
-                        if assumed_size.value() != reg_size.value() {
-                            return Err(ErrorCode::InvalidValue(format!("Value {parameter} cannot fit in {reg}")));
-                        }
-                    }
-                    self.add_or_sub_reg_const(reg, constant, is_addition)?;
-                },
-
-                //         OP               MEM          REG/CONST
-                [op @ ("add"|"sub"), memory_address, parameter] => {
-                    let is_addition = *op == "add";
-
-                    if self.memory_manager.is_memory_operand(parameter) {
-                        return Err(ErrorCode::InvalidValue(format!("Direct memory transfer is not supported.")));
-                    }
-                    
-                    let (size_option_src, _) = self.get_pointer_argument_size(parameter);
-                    let (size_option_dest, memory_address_str_dest) = self.get_pointer_argument_size(memory_address);
-
-                    if size_option_src.is_some() && size_option_dest.is_some() {
-                        let a = size_option_src.unwrap().value();
-                        let b = size_option_dest.unwrap().value();
-                        if a > b {
-                            return Err(ErrorCode::InvalidPointer(format!("Source size {:?} can't fit in destination size {:?}.", size_option_src ,size_option_dest)))
-                        }
-                    }
-
-
-                    // Calculate effective address of destination            
-                    match self.memory_manager.calculate_effective_address(memory_address_str_dest, &self.registers, &self.labels, true) {
-                        // Destination is valid address
-                        Ok(parsed_address) => {
-                            // Get value and size of memory to mov into destination address
-                            let (constant, assumed_size ) = {
-                                self.parse_value_from_parameter(parameter, size_option_src)?
-                            };
-
-                            // Save EAX value
-                            let eax: u32 = self.get_register_value("EAX")?;
-                            // Load constant into EAX
-                            self.registers[get_register("EAX")].load_dword(constant);
-
-                            match assumed_size {
-                                VariableSize::Byte => self.add_or_sub_mem_reg(parsed_address, "AL", is_addition)?,
-                                VariableSize::Word =>  self.add_or_sub_mem_reg(parsed_address, "AX", is_addition)?,
-                                VariableSize::DoubleWord =>  self.add_or_sub_mem_reg(parsed_address, "EAX", is_addition)?,
-                            };
-                            // Load original value back.
-                            self.registers[get_register("EAX")].load_dword(eax);
-
-
-                        },
-                        // Destination is not valid address
-                        Err(error) => return Err(error)
-                    }
-
-                    
-                    
-                },
-
-                ["add", _rest @ ..] => {
-                    println!("{}", Command::get_help_string(Command::Add));
-                    
-                    return Err(ErrorCode::InvalidOpcode);
-                },
-
-                ["sub", _rest @ ..] => {
-                    println!("{}", Command::get_help_string(Command::Sub));
-                    
-                    return Err(ErrorCode::InvalidOpcode);
-                },
-
-                [op @ ("mul" | "imul"), parameter] => {
-                    // Determine size of the operand
-                    let (size_option_src, memory_address_str_src) = self.get_pointer_argument_size(parameter);
-
-                    let (src_value, backup_size) = self.parse_value_from_parameter(memory_address_str_src, None)?;
-
-                    let size = size_option_src.unwrap_or(backup_size);
-
-                    self.mul_value(src_value, size, *op == "imul")?;
-                },
-
-                [op @ ("mul" | "imul"), _rest @ ..] => {
-                    let signed = *op == "imul";
-                    if signed {
-                        println!("{}", Command::get_help_string(Command::Imul));
-                    } else {
-                        println!("{}", Command::get_help_string(Command::Mul));
-                    }
-                    
-                    return Err(ErrorCode::InvalidOpcode);
-                },
-
-
-                // // DIV Instructions
-
-                [op @ ("div" | "idiv"), parameter] => {
-                    // Determine size of the operand
-                    let (size_option_src, memory_address_str_src) = self.get_pointer_argument_size(parameter);
-
-                    let (src_value, backup_size) = self.parse_value_from_parameter(memory_address_str_src, None)?;
-
-                    let size = size_option_src.unwrap_or(backup_size);
-
-                    self.div_value(src_value, size, *op == "imul")?;
-                },
-            
-
-                [op @ ("div" | "idiv"), _rest @ ..] => {
-                    let signed = *op == "idiv";
-                    if signed {
-                        println!("{}", Command::get_help_string(Command::Idiv));
-                    } else {
-                        println!("{}", Command::get_help_string(Command::Div));
-                    }
-                    
-                    return Err(ErrorCode::InvalidOpcode);
-                },
-
-                // // PRINT  Instructions
-
-                ["print", parameter] => { // if self.memory_manager.is_memory_operand(memory_address) => {
-                    // Determine size of the operand
-
-                    let args: Vec<&str> = parameter.split_whitespace().collect();
-                    let trimmed_parameter = if args[0] == "char" {
-                        args[1..].join(" ")
-                    } else {
-                        args.join(" ")
-                    };
-
-
-                    let (size, memory_address_str_src) = self.get_pointer_argument_size(&trimmed_parameter);
-                    let (src_value, _) = self.parse_value_from_parameter(memory_address_str_src, size)?;
-
-                    if args.len() == 2{
-                        if let Some(src_value_char) = std::char::from_u32(src_value) {
-                            println!("[PRINT]@[IP={ip}] {parameter}: {0}\n", src_value_char);
-                        }
-                    } else {
-                        println!("[PRINT]@[IP={ip}] {parameter}: {0}\n", src_value);
-                    }            
-                },
-
-
-                ["print", number, memory_address_maybe_ch]  => { //if self.memory_manager.is_memory_operand(memory_address) &&
-                                                                                            //parse_string_to_usize(*number).is_some() => {
-
-                    let args: Vec<&str> = memory_address_maybe_ch.split_whitespace().collect();
-
-                    let (ch, memory_address) = match args.as_slice() {
-                        ["char", address] => (true, *address),
-                        [address] => (false, *address),
-                        _ => return Err(ErrorCode::InvalidOpcode)
-                    };
-
-
-                    let (size_option_src, trimmed_address) = self.get_pointer_argument_size(memory_address);
-                    let size = size_option_src.unwrap_or(VariableSize::Byte);
-                    if let Ok(parsed_address) = self.memory_manager.calculate_effective_address(trimmed_address, &self.registers, &self.labels, true) {
-                        if let Some(value) = parse_string_to_usize(*number) {
-
-                            self.memory_manager.check_memory_address(parsed_address+value*size.value())?;
-
-                            let ip = self.registers[get_register("IP")].get_word();
-                            print!("[PRINT]@[IP={ip}][{parsed_address}..{}]:\t[", parsed_address+value-1);
-                            for i in 0..value {
-                                match size {
+                        let (size_option, memory_address_str) = self.get_pointer_argument_size(memory_address);
+                        let inc = *op == "inc";
+                        let size = size_option.unwrap_or(VariableSize::Byte);
+                        // Calculate effective address
+                        match self.memory_manager.calculate_effective_address(memory_address_str, &self.registers, &self.labels, true) {
+                            Ok(parsed_address) => {
+                                let (current, overflowed) = match size {
                                     VariableSize::Byte => {
-                                        let src_value = self.memory_manager.get_byte(parsed_address+i*size.value())?;
-
-                                        if ch {
-                                            if let Some(src_value_char) = std::char::from_u32(src_value as u32) {
-                                                print!("{0}", src_value_char);
-                                            } else {
-                                                print!("{}", format!("{: >width$}", src_value, width=4));
-                                            }
+                                        if inc {
+                                            let (cu8, o) = self.memory_manager.get_byte(parsed_address)?.overflowing_add(1);
+                                            (cu8 as u32, o)
                                         } else {
-                                            print!("{}", format!("{: >width$}", src_value, width=4));
+                                            let (cu8, o) = self.memory_manager.get_byte(parsed_address)?.overflowing_sub(1);
+                                            (cu8 as u32, o)
                                         }
                                     },
                                     VariableSize::Word => {
-                                        let src_value = self.memory_manager.get_word(parsed_address+i*size.value())?;
-                                        if ch {
-                                            if let Some(src_value_char) = std::char::from_u32(src_value as u32) {
-                                                print!("{0}", src_value_char);
+                                        if inc {
+                                            let (cu16, o) = self.memory_manager.get_word(parsed_address)?.overflowing_add(1);
+                                            (cu16 as u32, o)
+                                        } else {
+                                            let (cu16, o) = self.memory_manager.get_word(parsed_address)?.overflowing_sub(1);
+                                            (cu16 as u32, o)
+                                        }
+                                    },
+                                    VariableSize::DoubleWord => {
+                                        if inc {
+                                            let (cu16, o) = self.memory_manager.get_dword(parsed_address)?.overflowing_add(1);
+                                            (cu16 as u32, o)
+                                        } else {
+                                            let (cu16, o) = self.memory_manager.get_dword(parsed_address)?.overflowing_sub(1);
+                                            (cu16 as u32, o)
+                                        }
+                                    }
+                                };
+                                
+                                self.set_flags(current as usize, size, overflowed);
+                                
+                                match size {
+                                    VariableSize::Byte => self.memory_manager.set_byte(parsed_address, current as u8)?,
+                                    VariableSize::Word => self.memory_manager.set_word(parsed_address, current as u16)?,
+                                    VariableSize::DoubleWord => self.memory_manager.set_dword(parsed_address, current as u32)?,
+                                };
+                            },
+                            Err(error) => return Err(error),
+                        }
+                    },
+                    ["inc", _rest @ ..] => {
+                        println!("{}", Command::get_help_string(Command::Inc));
+                        
+                        return Err(ErrorCode::InvalidOpcode);
+                    },
+                    ["dec", _rest @ ..] => {
+                        println!("{}", Command::get_help_string(Command::Dec));
+                        
+                        return Err(ErrorCode::InvalidOpcode);
+                    },
+                    // LEA
+                    ["lea", reg, memory_address] if self.is_valid_register(*reg) && self.memory_manager.is_memory_operand(memory_address) => {
+                        match self.memory_manager.calculate_effective_address(memory_address, &self.registers, &self.labels, true) {
+                            Ok(parsed_address) => {
+                                // Determine the register size
+                                match get_register_size(*reg) {
+                                    Some(VariableSize::Byte) => {
+                                        return Err(ErrorCode::NotEnoughSpace(
+                                            format!("Cannot store pointer in 1-byte register: {reg}."))
+                                        );
+                                    },
+                                    Some(VariableSize::Word)|Some(VariableSize::DoubleWord) => {
+                                        self.mov_reg_const(reg, parsed_address as u32)?;
+                                    },
+                                    _ => {
+                                        return Err(ErrorCode::InvalidRegister);
+                                    },
+                                }
+                            },
+                            Err(error) => return Err(error),
+                        }
+                    },
+                    ["lea", _rest @ ..] => {
+                        println!("{}", Command::get_help_string(Command::Lea));
+                        
+                        return Err(ErrorCode::InvalidOpcode);
+                    },
+                    // MOV Instructions
+                    // OP    REG      MEM/REG/CONST
+                    ["mov", reg, parameter] if self.is_valid_register(*reg) => {
+                        let (size_option, memory_address) = self.get_pointer_argument_size(parameter);
+                        let (constant, assumed_size) = self.parse_value_from_parameter(memory_address, size_option)?;
+                        if let Some(reg_size) = get_register_size(reg) {
+                            if assumed_size.value() > reg_size.value() {
+                                return Err(ErrorCode::InvalidValue(format!("Value {parameter} cannot fit in {reg}")));
+                            }
+                        }
+                        self.mov_reg_const(reg, constant)?;
+
+                    },
+                    // OP       MEM               REG/CONST
+                    ["mov", memory_address, parameter] => {
+
+                        if self.memory_manager.is_memory_operand(parameter) {
+                            return Err(ErrorCode::InvalidValue(format!("Direct memory transfer is not supported.")));
+                        }
+
+                        let (size_option_dst, _) = self.get_pointer_argument_size(parameter);
+
+
+                        let (size_option_src, sliced_memory_string) = self.get_pointer_argument_size(memory_address);
+
+                        if let Some(size_dst) = size_option_dst {
+                            if let Some(size_src) = size_option_src {
+                                if size_dst != size_src {
+                                    return Err(ErrorCode::InvalidPointer(format!("Source ({parameter}) and destination ({memory_address}) size don't match.")));
+                                }
+                            }
+                        };
+                        
+
+                        // Calculate effective address of destination            
+                        match self.memory_manager.calculate_effective_address(sliced_memory_string, &self.registers, &self.labels, true) {
+                            // Destination is valid address
+                            Ok(parsed_address) => {
+                                // Get value and size of memory to mov into destination address
+                                let (constant, assumed_size_parameter ) = {
+                                    let (v, s) = self.parse_value_from_parameter(parameter, size_option_src)?;
+                                    (v, size_option_src.unwrap_or(s))
+                                };
+                                let (_, assumed_size_memory) = self.parse_value_from_parameter(sliced_memory_string, size_option_src)?; 
+                                if assumed_size_parameter != assumed_size_memory {
+                                    return Err(
+                                        ErrorCode::InvalidValue(
+                                            format!("Target memory pointer size ({}) doesn't match second parameter size ({})",
+                                                            assumed_size_memory.value(),          assumed_size_parameter.value())
+                                        )
+                                    );
+                                }
+                                
+                                match assumed_size_parameter {
+                                    VariableSize::Byte => self.memory_manager.set_byte(parsed_address, constant as u8)?,
+                                    VariableSize::Word => self.memory_manager.set_word(parsed_address, constant as u16)?,
+                                    VariableSize::DoubleWord => self.memory_manager.set_dword(parsed_address, constant as u32)?,
+                                };
+                            },
+                            // Destination is not valid address
+                            Err(error) => return Err(error)
+                        }
+                    },  
+                    // HELP COMMAND
+                    ["mov", _rest @ ..] => {
+                        println!("{}", Command::get_help_string(Command::Mov));
+                        
+                        return Err(ErrorCode::InvalidOpcode);
+                    },
+                    // ADD/SUB Instructions
+                    //         OP              REG          MEM/REG/CONST
+                    [op @ ("add"|"sub"), reg, parameter] if self.is_valid_register(reg) => {
+                        let is_addition = *op == "add";
+                                                                    // No "WORD PTR" etc.
+                        let (size_option, trimmed_parameter) = self.get_pointer_argument_size(parameter);
+        
+                        let (constant, assumed_size)= self.parse_value_from_parameter(trimmed_parameter, size_option)?;
+
+                        if let Some(reg_size) = get_register_size(reg) {
+                            if assumed_size.value() != reg_size.value() {
+                                return Err(ErrorCode::InvalidValue(format!("Value {parameter} cannot fit in {reg}")));
+                            }
+                        }
+                        self.add_or_sub_reg_const(reg, constant, is_addition)?;
+                    },
+                    //         OP               MEM          REG/CONST
+                    [op @ ("add"|"sub"), memory_address, parameter] => {
+                        let is_addition = *op == "add";
+
+                        if self.memory_manager.is_memory_operand(parameter) {
+                            return Err(ErrorCode::InvalidValue(format!("Direct memory transfer is not supported.")));
+                        }
+                        
+                        let (size_option_src, _) = self.get_pointer_argument_size(parameter);
+                        let (size_option_dest, memory_address_str_dest) = self.get_pointer_argument_size(memory_address);
+
+                        if size_option_src.is_some() && size_option_dest.is_some() {
+                            let a = size_option_src.unwrap().value();
+                            let b = size_option_dest.unwrap().value();
+                            if a > b {
+                                return Err(ErrorCode::InvalidPointer(format!("Source size {:?} can't fit in destination size {:?}.", size_option_src ,size_option_dest)))
+                            }
+                        }
+
+
+                        // Calculate effective address of destination            
+                        match self.memory_manager.calculate_effective_address(memory_address_str_dest, &self.registers, &self.labels, true) {
+                            // Destination is valid address
+                            Ok(parsed_address) => {
+                                // Get value and size of memory to mov into destination address
+                                let (constant, assumed_size ) = {
+                                    self.parse_value_from_parameter(parameter, size_option_src)?
+                                };
+
+                                // Save EAX value
+                                let eax: u32 = self.get_register_value("EAX")?;
+                                // Load constant into EAX
+                                self.registers[get_register("EAX")].load_dword(constant);
+
+                                match assumed_size {
+                                    VariableSize::Byte => self.add_or_sub_mem_reg(parsed_address, "AL", is_addition)?,
+                                    VariableSize::Word =>  self.add_or_sub_mem_reg(parsed_address, "AX", is_addition)?,
+                                    VariableSize::DoubleWord =>  self.add_or_sub_mem_reg(parsed_address, "EAX", is_addition)?,
+                                };
+                                // Load original value back.
+                                self.registers[get_register("EAX")].load_dword(eax);
+
+
+                            },
+                            // Destination is not valid address
+                            Err(error) => return Err(error)
+                        }
+
+                        
+                        
+                    },
+                    ["add", _rest @ ..] => {
+                        println!("{}", Command::get_help_string(Command::Add));
+                        
+                        return Err(ErrorCode::InvalidOpcode);
+                    },
+                    ["sub", _rest @ ..] => {
+                        println!("{}", Command::get_help_string(Command::Sub));
+                        
+                        return Err(ErrorCode::InvalidOpcode);
+                    },
+                    // MULL / IMUL
+                    [op @ ("mul" | "imul"), parameter] => {
+                        // Determine size of the operand
+                        let (size_option_src, memory_address_str_src) = self.get_pointer_argument_size(parameter);
+
+                        let (src_value, backup_size) = self.parse_value_from_parameter(memory_address_str_src, None)?;
+
+                        let size = size_option_src.unwrap_or(backup_size);
+
+                        self.mul_value(src_value, size, *op == "imul")?;
+                    },
+                    [op @ ("mul" | "imul"), _rest @ ..] => {
+                        let signed = *op == "imul";
+                        if signed {
+                            println!("{}", Command::get_help_string(Command::Imul));
+                        } else {
+                            println!("{}", Command::get_help_string(Command::Mul));
+                        }
+                        
+                        return Err(ErrorCode::InvalidOpcode);
+                    },
+                    // DIV / IDIV Instructions
+                    [op @ ("div" | "idiv"), parameter] => {
+                        // Determine size of the operand
+                        let (size_option_src, memory_address_str_src) = self.get_pointer_argument_size(parameter);
+
+                        let (src_value, backup_size) = self.parse_value_from_parameter(memory_address_str_src, None)?;
+
+                        let size = size_option_src.unwrap_or(backup_size);
+
+                        self.div_value(src_value, size, *op == "imul")?;
+                    },
+                    [op @ ("div" | "idiv"), _rest @ ..] => {
+                        let signed = *op == "idiv";
+                        if signed {
+                            println!("{}", Command::get_help_string(Command::Idiv));
+                        } else {
+                            println!("{}", Command::get_help_string(Command::Div));
+                        }
+                        
+                        return Err(ErrorCode::InvalidOpcode);
+                    },
+
+                    // PRINT  Instructions
+                    ["print", parameter] => { 
+                        // Determine size of the operand
+
+                        let args: Vec<&str> = parameter.split_whitespace().collect();
+                        let trimmed_parameter = if args[0] == "char" {
+                            args[1..].join(" ")
+                        } else {
+                            args.join(" ")
+                        };
+
+
+                        let (size, memory_address_str_src) = self.get_pointer_argument_size(&trimmed_parameter);
+                        let (src_value, _) = self.parse_value_from_parameter(memory_address_str_src, size)?;
+
+                        if args.len() == 2{
+                            if let Some(src_value_char) = std::char::from_u32(src_value) {
+                                println!("[PRINT]@[IP={ip}] {parameter}: {0}\n", src_value_char);
+                            }
+                        } else {
+                            println!("[PRINT]@[IP={ip}] {parameter}: {0}\n", src_value);
+                        }            
+                    },
+                    ["print", number, memory_address_maybe_ch]  => { //if self.memory_manager.is_memory_operand(memory_address) &&
+                                                                                                //parse_string_to_usize(*number).is_some() => {
+
+                        let args: Vec<&str> = memory_address_maybe_ch.split_whitespace().collect();
+
+                        let (ch, memory_address) = match args.as_slice() {
+                            ["char", address] => (true, *address),
+                            [address] => (false, *address),
+                            _ => return Err(ErrorCode::InvalidOpcode)
+                        };
+
+
+                        let (size_option_src, trimmed_address) = self.get_pointer_argument_size(memory_address);
+                        let size = size_option_src.unwrap_or(VariableSize::Byte);
+                        if let Ok(parsed_address) = self.memory_manager.calculate_effective_address(trimmed_address, &self.registers, &self.labels, true) {
+                            if let Some(value) = parse_string_to_usize(*number) {
+
+                                self.memory_manager.check_memory_address(parsed_address+value*size.value())?;
+
+                                let ip = self.registers[get_register("IP")].get_word();
+                                print!("[PRINT]@[IP={ip}][{parsed_address}..{}]:\t[", parsed_address+value-1);
+                                for i in 0..value {
+                                    match size {
+                                        VariableSize::Byte => {
+                                            let src_value = self.memory_manager.get_byte(parsed_address+i*size.value())?;
+
+                                            if ch {
+                                                if let Some(src_value_char) = std::char::from_u32(src_value as u32) {
+                                                    print!("{0}", src_value_char);
+                                                } else {
+                                                    print!("{}", format!("{: >width$}", src_value, width=4));
+                                                }
                                             } else {
                                                 print!("{}", format!("{: >width$}", src_value, width=4));
                                             }
-                                        } else {
-                                            print!("{}", format!("{: >width$}", src_value, width=4));
-                                        }                                    
-                                    },
-                                    VariableSize::DoubleWord => {
-                                        let src_value = self.memory_manager.get_dword(parsed_address+i*size.value())?;
-                                        if ch {
-                                            if let Some(src_value_char) = std::char::from_u32(src_value) {
-                                                print!("{0}", src_value_char);
+                                        },
+                                        VariableSize::Word => {
+                                            let src_value = self.memory_manager.get_word(parsed_address+i*size.value())?;
+                                            if ch {
+                                                if let Some(src_value_char) = std::char::from_u32(src_value as u32) {
+                                                    print!("{0}", src_value_char);
+                                                } else {
+                                                    print!("{}", format!("{: >width$}", src_value, width=4));
+                                                }
+                                            } else {
+                                                print!("{}", format!("{: >width$}", src_value, width=4));
+                                            }                                    
+                                        },
+                                        VariableSize::DoubleWord => {
+                                            let src_value = self.memory_manager.get_dword(parsed_address+i*size.value())?;
+                                            if ch {
+                                                if let Some(src_value_char) = std::char::from_u32(src_value) {
+                                                    print!("{0}", src_value_char);
+                                                } else {
+                                                    print!("{0} ", src_value);
+                                                }
                                             } else {
                                                 print!("{0} ", src_value);
-                                            }
-                                        } else {
-                                            print!("{0} ", src_value);
-                                        }  
-                                    },
+                                            }  
+                                        },
 
+                                    }
                                 }
+                                println!("]");
+                            } else {
+                                return Err(ErrorCode::InvalidValue(format!("Integer {number} could not be parsed.")))
                             }
-                            println!("]");
                         } else {
-                            return Err(ErrorCode::InvalidValue(format!("Integer {number} could not be parsed.")))
+                            return Err(ErrorCode::InvalidValue(format!("Memory address {memory_address} could not be parsed.")))
                         }
-                    } else {
-                        return Err(ErrorCode::InvalidValue(format!("Memory address {memory_address} could not be parsed.")))
-                    }
-                },
-                // ["int", interrupt] => if parse_string_to_usize(*interrupt) == Some(0){
+                    },
+                    ["NOP"] => {},
+                    [variable_name, define_as @ ("db"|"dw"|"dd"), rest @ ..] if self.memory_manager.is_valid_variable_name(*variable_name) => {
+                    // (parse_string_to_usize(*data).is_some() || self.memory_manager.is_valid_array(*data).is_ok() )=> {
+                        let size: VariableSize = match *define_as {
+                            "db" => VariableSize::Byte,
+                            "dw" => VariableSize::Word,
+                            "dd" => VariableSize::DoubleWord,
+                            _ => return Err(ErrorCode::InvalidValue("Invalid Variable Size".to_string()))
+                        };
+                        let mut bytes: Vec<u32> = Vec::new();
 
-                // }
-                ["NOP"] => {},
-                [variable_name, define_as @ ("db"|"dw"|"dd"), rest @ ..] if self.memory_manager.is_valid_variable_name(*variable_name) => {
-                // (parse_string_to_usize(*data).is_some() || self.memory_manager.is_valid_array(*data).is_ok() )=> {
-                    let size: VariableSize = match *define_as {
-                        "db" => VariableSize::Byte,
-                        "dw" => VariableSize::Word,
-                        "dd" => VariableSize::DoubleWord,
-                        _ => return Err(ErrorCode::InvalidValue("Invalid Variable Size".to_string()))
-                    };
-                    let mut bytes: Vec<u32> = Vec::new();
-
-                    for (_, &arg) in rest.iter().enumerate() {
-                        // Check if argument is a string literal and remove surrounding quotes
-                        if let Some((start_char, end_char)) = arg.chars().next().zip(arg.chars().rev().next()) {
-                            if (start_char == '"' && end_char == '"') || (start_char == '\'' && end_char == '\'') {
-                                let inner = &arg[1..arg.len() - 1];
-                                for c in inner.chars() {
-                                    bytes.push(c as u32);
+                        for (_, &arg) in rest.iter().enumerate() {
+                            // Check if argument is a string literal and remove surrounding quotes
+                            if let Some((start_char, end_char)) = arg.chars().next().zip(arg.chars().rev().next()) {
+                                if (start_char == '"' && end_char == '"') || (start_char == '\'' && end_char == '\'') {
+                                    let inner = &arg[1..arg.len() - 1];
+                                    for c in inner.chars() {
+                                        bytes.push(c as u32);
+                                    }
+                                } else {
+                                    // Handle other cases (numeric values, etc.)
+                                    if let Some(value) = parse_string_to_usize(arg) {
+                                        bytes.push(value as u32);
+                                    } else {
+                                        return Err(ErrorCode::InvalidValue(format!("Could not parse {arg}")));
+                                    }
                                 }
                             } else {
                                 // Handle other cases (numeric values, etc.)
                                 if let Some(value) = parse_string_to_usize(arg) {
-                                    bytes.push(value as u32);
+                                    bytes.push(value as u32);                   
                                 } else {
                                     return Err(ErrorCode::InvalidValue(format!("Could not parse {arg}")));
                                 }
                             }
+                        }
+
+                        if let Err(error) = self.memory_manager.save_variable(variable_name.to_string(), &bytes, size) {
+                            
+                            return Err(error);
+                        }
+
+                    },
+                   //////// JUMPS ////////////
+                    ["jmp", label] => {
+                        if let Err(error) = self.jump_to(label) {     
+                            println!("{}", Command::get_help_string(Command::Jmp));
+                            return Err(error);
+                        }
+                    },
+                    // JUMPS
+                    [_flag @ ("je"|"jz"|"jne"|"jnz"), label] => {
+                        let ne = *_flag == "jne" || *_flag == "jnz";
+                        if !(ne ^ self.is_flag_on(Flag::Zero)) {
+                            continue;
+                        }
+                        if let Err(error) = self.jump_to(label) {     
+                            match *_flag {
+                                "je" =>  println!("{}", Command::get_help_string(Command::Je)),
+                                "jz" =>  println!("{}", Command::get_help_string(Command::Jz)),
+                                "jne" =>  println!("{}", Command::get_help_string(Command::Jne)),
+                                "jnz" =>  println!("{}", Command::get_help_string(Command::Jnz)),
+                                _ => {}
+                            }          
+                            return Err(error);
+                        }
+                    }        
+                    [_flag @ ("jg" | "jge"), label] => {
+                        let is_jg = *_flag == "jg";
+
+                        if !(is_jg && (self.is_flag_on(Flag::Sign) ^ self.is_flag_on(Flag::Overflow))) {
+                            continue;
+                        }
+                
+                        if let Err(error) = self.jump_to(label) {   
+                            match *_flag {
+                                "jg" =>  println!("{}", Command::get_help_string(Command::Jg)),
+                                "jge" =>  println!("{}", Command::get_help_string(Command::Jge)),
+                                _ => {}
+                            }                
+                            return Err(error);
+                        }
+                    }
+                    [_flag @ ("jl" | "jle"), label] => {
+                        let is_jl = *_flag == "jl";
+
+                        if !(is_jl && (self.is_flag_on(Flag::Sign) ^ self.is_flag_on(Flag::Overflow))) {
+                            continue;
+                        }
+                
+                        if let Err(error) = self.jump_to(label) {    
+                            match *_flag {
+                                "jl" =>  println!("{}", Command::get_help_string(Command::Jl)),
+                                "jle" =>  println!("{}", Command::get_help_string(Command::Jle)),
+                                _ => {}
+                            }   
+                            return Err(error);
+                        }
+                    }
+                    [_flag @ ("ja" | "jae"), label] => {
+                        let is_jl = *_flag == "ja";
+
+                        if !(is_jl && (self.is_flag_on(Flag::Carry) ^ self.is_flag_on(Flag::Zero))) {
+                            continue;
+                        }
+                
+                        if let Err(error) = self.jump_to(label) {       
+                            match *_flag {
+                                "ja" =>  println!("{}", Command::get_help_string(Command::Ja)),
+                                "jae" =>  println!("{}", Command::get_help_string(Command::Jae)),
+                                _ => {}
+                            }           
+                            return Err(error);
+                        }
+                    }
+                    [_flag @ ("jb" | "jbe"), label] => {
+                        let is_jbe = *_flag == "jbe";
+
+                        if self.is_flag_on(Flag::Carry) || (is_jbe && self.is_flag_on(Flag::Zero)) {
+                            continue;
+                        }
+
+                        if let Err(error) = self.jump_to(label) {          
+                            match *_flag {
+                                "jb" =>  println!("{}", Command::get_help_string(Command::Jb)),
+                                "jbe" =>  println!("{}", Command::get_help_string(Command::Jbe)),
+                                _ => {}
+                            }        
+                            return Err(error);
+                        }
+                    }
+                    // CMP
+                    ["cmp", first_operand, second_operand] => {
+
+                        let (first_size_option, trimmed_first_parameter) = self.get_pointer_argument_size(first_operand);
+                        let (first_operand_value, first_operand_size) = self.parse_value_from_parameter(trimmed_first_parameter, first_size_option)?;
+
+
+                        let (second_size_option, trimmed_second_parameter) = self.get_pointer_argument_size(second_operand);
+                        let (second_operand_value, second_operand_size) = self.parse_value_from_parameter(trimmed_second_parameter, second_size_option)?;
+
+
+                        if first_operand_size != second_operand_size {
+                            return Err(ErrorCode::InvalidValue(
+                                            format!("Target memory pointer size ({}) doesn't match second parameter size ({})",
+                                                            first_operand_size.value(),          second_operand_size.value())
+                                        ))
+                        }
+                        // Initialize variables to store parsed values
+                        let first_value = first_operand_value as isize;
+                        let second_value = second_operand_value as isize;
+
+                        let result = first_value - second_value;
+                        // Set flags based on comparison results
+                        self.set_flag(Flag::Zero, result == 0);
+                        self.set_flag(Flag::Carry, first_value < second_value);
+                        self.set_flag(Flag::Overflow, (first_value < 0 && second_value > 0 && result > 0) || (first_value > 0 && second_value < 0 && result < 0));
+                        self.set_flag(Flag::Sign, result < 0);
+                        self.set_flag(Flag::Parity, result.count_ones() % 2 == 0);
+                    
+                    },
+                    // STACK OPERATIONS
+                    ["push", parameter] => {
+                        // No "WORD PTR" etc.
+
+                        let (size_option, trimmed_parameter) = self.get_pointer_argument_size(parameter);
+
+                        let (value, size) = self.parse_value_from_parameter(trimmed_parameter, size_option)?;
+                        self.memory_manager.push_to_stack(value, size)?;
+
+                    },
+                    ["pop", parameter] => {
+                        // No "WORD PTR" etc.
+                        let (size_option, trimmed_parameter) = self.get_pointer_argument_size(parameter);
+
+                        let (_, size) = self.parse_value_from_parameter(trimmed_parameter, size_option)?;
+                        
+                        let popped_value = self.memory_manager.pop_from_stack(size)?;
+
+                        if self.is_valid_register(parameter) {
+                            match size {
+                                VariableSize::Byte => return Err(ErrorCode::InvalidValue("POP can only receive a 16-bit or 32-bit parameter.".to_string())),
+                                VariableSize::Word => self.registers[get_register(parameter)].load_word(popped_value as u16),
+                                VariableSize::DoubleWord => self.registers[get_register(parameter)].load_dword(popped_value),
+                            }
                         } else {
-                            // Handle other cases (numeric values, etc.)
-                            if let Some(value) = parse_string_to_usize(arg) {
-                                bytes.push(value as u32);                   
-                            } else {
-                                return Err(ErrorCode::InvalidValue(format!("Could not parse {arg}")));
+                            // Calculate effective address of destination            
+                            match self.memory_manager.calculate_effective_address(trimmed_parameter, &self.registers, &self.labels, true) {
+                                // Destination is valid address
+                                Ok(parsed_address) => {
+                                    match size {
+                                        VariableSize::Byte =>  return Err(ErrorCode::InvalidValue("POP can only receive a 16-bit or 32-bit parameter.".to_string())),
+                                        VariableSize::Word => self.memory_manager.set_word(parsed_address, popped_value as u16)?,
+                                        VariableSize::DoubleWord => self.memory_manager.set_dword(parsed_address, popped_value)?,
+                                    }
+                                },
+                                Err(error) => return Err(error)
                             }
                         }
-                    }
 
-                    if let Err(error) = self.memory_manager.save_variable(variable_name.to_string(), &bytes, size) {
-                        
-                        return Err(error);
-                    }
-
-                },
-
-                //////// JUMPS ////////////
-                ["jmp", label] => {
-                    if let Err(error) = self.jump_to(label) {     
-                        println!("{}", Command::get_help_string(Command::Jmp));
-                        return Err(error);
-                    }
-                }
-
-                [_flag @ ("je"|"jz"|"jne"|"jnz"), label] => {
-                    let ne = *_flag == "jne" || *_flag == "jnz";
-                    if !(ne ^ self.is_flag_on(Flag::Zero)) {
-                        continue;
-                    }
-                    if let Err(error) = self.jump_to(label) {     
-                        match *_flag {
-                            "je" =>  println!("{}", Command::get_help_string(Command::Je)),
-                            "jz" =>  println!("{}", Command::get_help_string(Command::Jz)),
-                            "jne" =>  println!("{}", Command::get_help_string(Command::Jne)),
-                            "jnz" =>  println!("{}", Command::get_help_string(Command::Jnz)),
-                            _ => {}
-                        }          
-                        return Err(error);
-                    }
-                }
-                
-                [_flag @ ("jg" | "jge"), label] => {
-                    let is_jg = *_flag == "jg";
-
-                    if !(is_jg && (self.is_flag_on(Flag::Sign) ^ self.is_flag_on(Flag::Overflow))) {
-                        continue;
-                    }
-            
-                    if let Err(error) = self.jump_to(label) {   
-                        match *_flag {
-                            "jg" =>  println!("{}", Command::get_help_string(Command::Jg)),
-                            "jge" =>  println!("{}", Command::get_help_string(Command::Jge)),
-                            _ => {}
-                        }                
-                        return Err(error);
-                    }
-                }
-
-                [_flag @ ("jl" | "jle"), label] => {
-                    let is_jl = *_flag == "jl";
-
-                    if !(is_jl && (self.is_flag_on(Flag::Sign) ^ self.is_flag_on(Flag::Overflow))) {
-                        continue;
-                    }
-            
-                    if let Err(error) = self.jump_to(label) {    
-                        match *_flag {
-                            "jl" =>  println!("{}", Command::get_help_string(Command::Jl)),
-                            "jle" =>  println!("{}", Command::get_help_string(Command::Jle)),
-                            _ => {}
-                        }   
-                        return Err(error);
-                    }
-                }
-
-                [_flag @ ("ja" | "jae"), label] => {
-                    let is_jl = *_flag == "ja";
-
-                    if !(is_jl && (self.is_flag_on(Flag::Carry) ^ self.is_flag_on(Flag::Zero))) {
-                        continue;
-                    }
-            
-                    if let Err(error) = self.jump_to(label) {       
-                        match *_flag {
-                            "ja" =>  println!("{}", Command::get_help_string(Command::Ja)),
-                            "jae" =>  println!("{}", Command::get_help_string(Command::Jae)),
-                            _ => {}
-                        }           
-                        return Err(error);
-                    }
-                }
-
-                [_flag @ ("jb" | "jbe"), label] => {
-                    let is_jbe = *_flag == "jbe";
-
-                    if self.is_flag_on(Flag::Carry) || (is_jbe && self.is_flag_on(Flag::Zero)) {
-                        continue;
-                    }
-
-                    if let Err(error) = self.jump_to(label) {          
-                        match *_flag {
-                            "jb" =>  println!("{}", Command::get_help_string(Command::Jb)),
-                            "jbe" =>  println!("{}", Command::get_help_string(Command::Jbe)),
-                            _ => {}
-                        }        
-                        return Err(error);
-                    }
-                }
-
-                
-                ["cmp", first_operand, second_operand] => {
-                    // Determine if operands are negative (assuming they start with '-')
-                    // let is_negative_first = first_operand.starts_with("-");
-                    // let is_negative_second = second_operand.starts_with("-");
-                
-                    // let arg1 = if is_negative_first {
-                    //     first_operand[1..].to_string()
-                    // } else {
-                    //     first_operand.to_string()
-                    // };
-                    
-                    // let arg2 = if is_negative_second {
-                    //     second_operand[1..].to_string()
-                    // } else {
-                    //     second_operand.to_string()
-                    // };  
-
-                    let (first_size_option, trimmed_first_parameter) = self.get_pointer_argument_size(first_operand);
-                    let (first_operand_value, first_operand_size) = self.parse_value_from_parameter(trimmed_first_parameter, first_size_option)?;
-
-
-                    let (second_size_option, trimmed_second_parameter) = self.get_pointer_argument_size(second_operand);
-                    let (second_operand_value, second_operand_size) = self.parse_value_from_parameter(trimmed_second_parameter, second_size_option)?;
-
-
-                    if first_operand_size != second_operand_size {
-                        return Err(ErrorCode::InvalidValue(
-                                        format!("Target memory pointer size ({}) doesn't match second parameter size ({})",
-                                                         first_operand_size.value(),          second_operand_size.value())
-                                    ))
-                    }
-                    // Initialize variables to store parsed values
-                    let first_value = first_operand_value as isize;
-                    let second_value = second_operand_value as isize;
-
-                    let result = first_value - second_value;
-                    // Set flags based on comparison results
-                    self.set_flag(Flag::Zero, result == 0);
-                    self.set_flag(Flag::Carry, first_value < second_value);
-                    self.set_flag(Flag::Overflow, (first_value < 0 && second_value > 0 && result > 0) || (first_value > 0 && second_value < 0 && result < 0));
-                    self.set_flag(Flag::Sign, result < 0);
-                    self.set_flag(Flag::Parity, result.count_ones() % 2 == 0);
-                
-                },
-                ["push", parameter] => {
-                    // No "WORD PTR" etc.
-
-                    let (size_option, trimmed_parameter) = self.get_pointer_argument_size(parameter);
-
-                    let (value, size) = self.parse_value_from_parameter(trimmed_parameter, size_option)?;
-                    self.memory_manager.push_to_stack(value, size)?;
-
-                },
-                ["pop", parameter] => {
-                    // No "WORD PTR" etc.
-                    let (size_option, trimmed_parameter) = self.get_pointer_argument_size(parameter);
-
-                    let (_, size) = self.parse_value_from_parameter(trimmed_parameter, size_option)?;
-                    
-                    let popped_value = self.memory_manager.pop_from_stack(size)?;
-
-                    if self.is_valid_register(parameter) {
-                        match size {
-                            VariableSize::Byte => return Err(ErrorCode::InvalidValue("POP can only receive a 16-bit or 32-bit parameter.".to_string())),
-                            VariableSize::Word => self.registers[get_register(parameter)].load_word(popped_value as u16),
-                            VariableSize::DoubleWord => self.registers[get_register(parameter)].load_dword(popped_value),
-                        }
-                    } else {
-                        // Calculate effective address of destination            
-                        match self.memory_manager.calculate_effective_address(trimmed_parameter, &self.registers, &self.labels, true) {
-                            // Destination is valid address
-                            Ok(parsed_address) => {
-                                match size {
-                                    VariableSize::Byte =>  return Err(ErrorCode::InvalidValue("POP can only receive a 16-bit or 32-bit parameter.".to_string())),
-                                    VariableSize::Word => self.memory_manager.set_word(parsed_address, popped_value as u16)?,
-                                    VariableSize::DoubleWord => self.memory_manager.set_dword(parsed_address, popped_value)?,
-                                }
-                            },
-                            Err(error) => return Err(error)
+                    },
+                    // IGNORE LABELS
+                    [label] if label.ends_with(":") => {
+                        let no_colon = &label[..label.len()-1];
+                        // Found no label
+                        if self.labels.get(no_colon).is_none(){
+                            return Err(ErrorCode::InvalidOpcode);
                         }
                     }
-
-                },
-                [label] if label.ends_with(":") => {
-                    let no_colon = &label[..label.len()-1];
-                    // Found no label
-                    if self.labels.get(no_colon).is_none(){
+                    // NO MATCH
+                    _ => {
+                        println!("Unknown instruction: {:?}", line);
                         return Err(ErrorCode::InvalidOpcode);
-                    }
+                        // Handle unrecognized instructions
+                    },
                 }
-                _ => {
-                    println!("Unknown instruction: {:?}", arguments);
-                    return Err(ErrorCode::InvalidOpcode);
-                    // Handle unrecognized instructions
-                },
             }
+
+            self.lines.update_ip_register(&mut self.registers[get_register("IP")]);
+
         }
-        
         Ok(())
     }
 

@@ -12,53 +12,52 @@ impl LineProcessor {
             ip: 0
         }
     }
-    pub fn next(&mut self, ip_register: &mut Register, verbose: bool) -> Option<Vec<String>> {
+
+    pub fn next(&mut self, verbose: bool) -> Option<Vec<String>> {
         while self.ip < self.lines.len() {
             let line = self.lines[self.ip].clone();
             let whole_line = line.trim();
 
             // Split by ";" to remove comments and take the first part
-            let without_comment: Vec<&str> = whole_line.split(';')
-                .map(|s| s.trim())
-                .collect();
+            let without_comment = whole_line.split(';').next().unwrap_or("").trim();
 
-            if without_comment[0] == "" {
+            if without_comment.is_empty() {
                 self.ip += 1;
                 continue;
-            } else {
-                if verbose {
-                    println!("[LINE] [{}] {}", self.ip, line);
-                }
-
-                let mut arguments: Vec<String> = without_comment[0]
-                    .split_whitespace()
-                    .map(|s| s.to_string())
-                    .collect();
-
-                if arguments.len() > 1 {
-                    let mut combined_arguments: Vec<String> = vec![arguments[0].clone()];
-                    let further_arguments: Vec<String> = arguments[1..]
-                        .join(" ")
-                        .split(", ")
-                        .map(|s| s.trim().to_string())
-                        .collect();
-                    combined_arguments.extend(further_arguments);
-                    arguments = combined_arguments;
-                }
-
-                ip_register.load_word(self.ip as u16);
-                self.ip += 1;
-                return Some(arguments);
             }
+
+            if verbose {
+                println!("[LINE] [{}] {}", self.ip, line);
+            }
+
+            let instruction = without_comment.split_whitespace().next().unwrap_or("NOP").to_string();
+            
+            if instruction == "NOP" {
+                self.ip += 1;
+                continue;
+            }
+
+            let operands: Vec<String> = without_comment[instruction.len()..]
+                                        .split(',')
+                                        .map(str::trim)
+                                        .map(String::from)
+                                        .collect();
+
+            self.ip += 1;
+            let mut parts = vec![instruction];
+            if operands[0] != "".to_string() {
+                parts.extend(operands);
+            }
+            return Some(parts);
         }
         None
+
     }
     pub fn set_ip(&mut self, value: usize) {
         self.ip = value;
     }
-}
 
-pub fn convert_vec_string_to_vec_str<'a>(vec: &'a [String]) -> Vec<&'a str> {
-    vec.iter().map(|s| s.as_str()).collect()
+    pub fn update_ip_register(&mut self, ip_register: &mut Register) {
+        ip_register.load_word(self.ip as u16);
+    }
 }
-
