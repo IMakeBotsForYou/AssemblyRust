@@ -29,7 +29,7 @@ const MEMORY_SIZE: usize = 1024 * 16; // 16 KB
 
 pub struct Engine {
     lines: LineProcessor, // lines of source code (.txt)
-    pub registers: [Register; 8], // A-D, ESI, EDI, P
+    pub registers: [Register; 10], // A-D, ESI, EDI, P
     memory_manager: MemoryManager, // 16 KB bytes of memory
     // mode: bool, // false = reading data, true = reading code
     labels: HashMap<String, usize>, // labels to jump to
@@ -42,13 +42,15 @@ pub struct Engine {
 impl Engine {
     pub fn new(file_name: &str) -> io::Result<Self> {
         let file_lines = read_lines_from_file(file_name)?;
-        let my_registers: [Register; 8] = [
+        let my_registers: [Register; 10] = [
             Register::new("EAX"),
             Register::new("EBX"),
             Register::new("ECX"),
             Register::new("EDX"),
             Register::new("ESI"),
             Register::new("EDI"),
+            Register::new("BP"),
+            Register::new("SP"),
             Register::new("IP"),
             Register::new("FLAG"),
         ];
@@ -87,7 +89,7 @@ impl Engine {
         match name {
             "AL"   | "BL"  | "CL" | "DL" => Ok(value & 0x000000FF),
             "AH"   | "BH"  | "CH" | "DH" => Ok((value & 0x0000FF00) >> 8),
-            "FLAG" | "AX"  | "BX" | "CX"  | "DX"  => Ok(value & 0x0000FFFF), 
+            "FLAG" | "AX"  | "BX" | "CX"  | "DX" | "SI" | "DI" | "SP"  => Ok(value & 0x0000FFFF), 
             "ESI"  | "EDI" | "IP" | "EAX" | "EBX" | "ECX" | "EDX"  => Ok(value), 
             _ => Err(ErrorCode::InvalidRegister)
         }
@@ -170,7 +172,7 @@ impl Engine {
                 "EAX"|"EAB"|"EAC"|"EAD"|"ESI"|"EDI" => {
                     VariableSize::DoubleWord
                 },
-                "AX"|"BX"|"CX"|"DX"|"SI"|"DI"|"FLAG"|"IP"  => {
+                "AX"|"BX"|"CX"|"DX"|"SI"|"DI"|"FLAG"|"IP"|"SP"  => {
                     VariableSize::Word
                 },
                 _ => return Err(ErrorCode::InvalidRegister) // Unreachable
@@ -837,8 +839,15 @@ impl Engine {
                         let (second_size_option, trimmed_second_parameter) = self.get_pointer_argument_size(second_operand);
                         let (second_operand_value, second_operand_size) = self.parse_value_from_parameter(trimmed_second_parameter, second_size_option)?;
 
+                        let second_is_immediate: bool = parse_string_to_usize(second_operand).is_some();
 
-                        if first_operand_size != second_operand_size {
+                        if second_is_immediate && first_operand_size.value() < second_operand_size.value(){
+                            return Err(ErrorCode::InvalidValue(
+                                    format!("Target memory pointer size ({}) bytes doesn't match second parameter size ({}) bytes",
+                                                    first_operand_size.value(),          second_operand_size.value())
+                                ))
+
+                        } else if !second_is_immediate && first_operand_size != second_operand_size {
                             return Err(ErrorCode::InvalidValue(
                                             format!("Target memory pointer size ({}) bytes doesn't match second parameter size ({}) bytes",
                                                             first_operand_size.value(),          second_operand_size.value())
@@ -863,7 +872,7 @@ impl Engine {
                         let (size_option, trimmed_parameter) = self.get_pointer_argument_size(parameter);
 
                         let (value, size) = self.parse_value_from_parameter(trimmed_parameter, size_option)?;
-                        self.memory_manager.push_to_stack(value, size)?;
+                        self.memory_manager.push_to_stack(value, size, &mut self.registers[get_register("SI")])?;
 
                     },
                     ["pop", parameter] => {
@@ -871,7 +880,7 @@ impl Engine {
                         let (size_option, trimmed_parameter) = self.get_pointer_argument_size(parameter);
 
                         let (_, size) = self.parse_value_from_parameter(trimmed_parameter, size_option)?;
-                        let popped_value = self.memory_manager.pop_from_stack(size)?;
+                        let popped_value = self.memory_manager.pop_from_stack(size, &mut self.registers[get_register("SI")])?;
                         if self.is_valid_register(parameter) {
                             match size {
                                 VariableSize::Byte => return Err(ErrorCode::InvalidValue("POP can only receive a 16-bit or 32-bit parameter.".to_string())),
@@ -998,7 +1007,7 @@ impl Engine {
 
                 (sum as u32, overflowed, VariableSize::Byte)
             },
-            "AX" | "BX" | "CX" | "DX" | "SI" | "DI" | "FLAG" | "IP" => {
+            "AX" | "BX" | "CX" | "DX" | "SI" | "DI" | "FLAG" | "IP" | "SP" => {
                 let src_value = self.registers[get_register(src)].get_word();
                 let dest_value = self.memory_manager.get_word(memory_address)?;
 
@@ -1036,7 +1045,7 @@ impl Engine {
     
     fn add_or_sub_reg_const(&mut self, dest: &str, constant: u32, is_addition: bool) -> Result<(), ErrorCode>{
         match dest {
-            "AX"|"BX"|"CX"|"DX"|"ESI"|"EDI"|"FLAG"|"IP" => {
+            "AX"|"BX"|"CX"|"DX"|"ESI"|"EDI"|"FLAG"|"IP"|"SP" => {
                 if constant > u16::MAX as u32 {
                     return Err(ErrorCode::InvalidValue(format!("Value {constant} can't fit in {dest}")));
                 }

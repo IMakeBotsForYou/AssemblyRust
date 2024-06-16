@@ -19,7 +19,6 @@ pub struct MemoryManager {
     memory: Vec<u8>,
     pub variable_pointers: HashMap<String, VariableMetadata>,
     segments: [usize; 3],
-    stack_pointer: usize,
 }
 
 impl MemoryManager {
@@ -28,7 +27,6 @@ impl MemoryManager {
             memory: vec![0; size],
             variable_pointers: HashMap::new(),
             segments: seg,
-            stack_pointer: size-1
         }
     }
     
@@ -46,39 +44,44 @@ impl MemoryManager {
         }
     }
     
-    pub fn push_to_stack(&mut self, value: u32, size: VariableSize) -> Result<(), ErrorCode> {
+    pub fn push_to_stack(&mut self, value: u32, size: VariableSize, si_register: &mut Register) -> Result<(), ErrorCode> {
         match size {
             VariableSize::Byte => {
-                self.set_byte(self.stack_pointer, value as u8)?;
-                self.stack_pointer -= 1;
+                let si = si_register.get_word() as usize;
+                self.set_byte(self.memory.len()-si-1, value as u8)?;
+                si_register.load_word(si as u16 +1);
             }
             VariableSize::Word => {
-                self.set_word(self.stack_pointer-1, value as u16)?;
-                self.stack_pointer -= 2;
+                let si = si_register.get_word() as usize;
+                self.set_word(self.memory.len()-si-2, value as u16)?;
+                si_register.load_word(si as u16 + 2);
             },
             VariableSize::DoubleWord => {
-                self.set_dword(self.stack_pointer-3, value)?;
-                self.stack_pointer -= 4;
+                let si: usize = si_register.get_word() as usize;
+                self.set_dword(self.memory.len()-si-4, value)?;
+                si_register.load_word(si as u16 + 4);
             }
         }
         Ok(())
     }
-
-    pub fn pop_from_stack(&mut self, size: VariableSize) -> Result<u32, ErrorCode> {
+    pub fn pop_from_stack(&mut self, size: VariableSize, si_register: &mut Register) -> Result<u32, ErrorCode> {
         let result = match size {
             VariableSize::Byte => {
-                let value = self.get_byte(self.stack_pointer+1)? as u32;
-                self.stack_pointer += 1;
+                let si = si_register.get_word() as usize;
+                let value = self.get_byte(self.memory.len()-si)? as u32;
+                si_register.load_word(si as u16 -1 );
                 value
             },
             VariableSize::Word => {
-                let value = self.get_word(self.stack_pointer+1)? as u32;
-                self.stack_pointer += 2;
+                let si = si_register.get_word() as usize;
+                let value = self.get_word(self.memory.len()-si-1)? as u32;
+                si_register.load_word(si as u16 - 2);
                 value
             },
             VariableSize::DoubleWord => {
-                let value = self.get_dword(self.stack_pointer+1)?;
-                self.stack_pointer += 4;
+                let si = si_register.get_word() as usize;
+                let value = self.get_dword(self.memory.len()-si-3)?;
+                si_register.load_word(si as u16 - 4);
                 value
             }
         };
@@ -185,18 +188,19 @@ impl MemoryManager {
         operand.starts_with('[') && operand.ends_with(']')
     }
 
-    pub fn get_register_value(&self, registers: &[Register; 8], name: &str) -> Option<u16> {
+    pub fn get_register_value(&self, registers: &[Register; 10], name: &str) -> Option<u32> {
 
         if get_register_size(name).is_none() {
             return None;
         }
 
-        let value = registers[get_register(name)].get_word();
+        let value = registers[get_register(name)].get_dword();
 
         match name {
-            "AL"  | "BL"  | "CL" | "DL" => Some(value & 0x00FF),
-            "AH"  | "BH"  | "CH" | "DH" => Some(value >> 8),
-            "AX"  | "BX"  | "CX" | "DX" | "ESI" | "EDI" | "IP" | "FLAG" => Some(value),
+            "AL"   | "BL"   | "CL"  | "DL" => Some(value & 0x000000FF),
+            "AH"   | "BH"   | "CH"  | "DH" => Some(value & 0x0000FF00),
+            "AX"   | "BX"   | "CX"  | "DX"  | "SI"  | "DI"  | "IP" | "FLAG" => Some(value & 0x0000FFFF),
+            "EAX"  | "EBX"  | "ECX" | "EDX" | "ESI" | "EDI" => Some(value),
             _ => None,
         }
     }
@@ -206,7 +210,7 @@ impl MemoryManager {
     Effective Address=Base+(Index*Scale)+Displacement
 
      */
-    pub fn calculate_effective_address(&self, mem_operand: &str, registers: &[Register; 8], labels: &HashMap<String, usize>, label_vars: bool) -> Result<usize, ErrorCode> {
+    pub fn calculate_effective_address(&self, mem_operand: &str, registers: &[Register; 10], labels: &HashMap<String, usize>, label_vars: bool) -> Result<usize, ErrorCode> {
         // Ensure the memory operand is valid and remove the square brackets
         if !self.is_memory_operand(mem_operand) {
             return Err(ErrorCode::InvalidPointer("Memory Operand must be enveloped in []".to_string()));
@@ -264,7 +268,7 @@ impl MemoryManager {
         Ok(effective_address as usize)
     }
     
-    pub fn parse_value(&self, part: &str, is_negative: bool, registers: &[Register; 8], labels: &HashMap<String, usize>, label_vars: bool) -> Option<isize> {
+    pub fn parse_value(&self, part: &str, is_negative: bool, registers: &[Register; 10], labels: &HashMap<String, usize>, label_vars: bool) -> Option<isize> {
     
         if let Some(value) = parse_string_to_usize(part) {
             if is_negative {

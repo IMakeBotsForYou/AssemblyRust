@@ -7,7 +7,6 @@ pub struct Register {
 }
 
 
-
 impl Register {
     pub fn new(name: &str) -> Self {
         Self { value: 0, name: name.to_string() }
@@ -66,11 +65,12 @@ pub fn get_register(name: &str) -> usize{
         "EBX"|"BX"|"BL"|"BH" => 1,
         "ECX"|"CX"|"CL"|"CH" => 2,
         "EDX"|"DX"|"DL"|"DH" => 3,
-        "SI" => 4,
-        "DI" => 5,
-        "IP" => 6,   
-        "FLAG" => 7,   
+        "ESI"|"SI" => 4,
+        "EDI"|"DI" => 5,
+        "BP" => 6,
+        "SP" => 7,
+        "IP" => 8,   
+        "FLAG" => 9,   
         _ => panic!("Invalid register name: {}", name),
     }
 }
-
