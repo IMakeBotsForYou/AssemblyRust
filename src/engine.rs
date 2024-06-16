@@ -26,6 +26,38 @@ use crate::{
 
 const MEMORY_SIZE: usize = 1024 * 16; // 16 KB
 
+fn combine_parts(vec: &Vec<String>) -> Vec<String> {
+    let mut result: Vec<String> = Vec::new();
+    let mut combined: String = String::new();
+    let mut in_quotes: bool = false;
+
+    for item in vec {
+        if item.starts_with('\'') && item.ends_with('\'') {
+            result.push(format!("\'{}\'", item.trim_matches('\'').to_string()));
+        } else if item.starts_with('\'') {
+            combined.push_str(&format!("\'{}", item.trim_matches('\'').to_string()));
+            in_quotes = true;
+        } else if item.ends_with('\'') {
+            combined.push_str(", ");
+            combined.push_str(&format!("{}\'", item.trim_matches('\'').to_string()));
+            result.push(combined.clone());
+            combined.clear();
+            in_quotes = false;
+        } else if in_quotes {
+            combined.push_str(", ");
+            combined.push_str(&item);
+        } else {
+            result.push(item.to_string());
+        }
+    }
+
+    // If there's a trailing combined string without a closing quote
+    if !combined.is_empty() {
+        result.push(combined);
+    }
+
+    result
+}
 
 pub struct Engine {
     lines: LineProcessor, // lines of source code (.txt)
@@ -248,8 +280,12 @@ impl Engine {
             if line_option.is_none() {
                 break;
             }
+
+
+            
             if let Some(line) = line_option {
-                let line_str: Vec<&str> = line.iter().map(|s| &**s).collect();
+                let combining_inside_quotes: Vec<String> = combine_parts(&line);
+                let line_str: Vec<&str> = combining_inside_quotes.iter().map(|s| &**s).collect();
                 match line_str.as_slice() {
                     // INC DEC 
                     [op @ ("inc" | "dec"), register] if self.is_valid_register(register) => {
@@ -600,19 +636,17 @@ impl Engine {
                             args.join(" ")
                         };
 
-
-                        let (size, memory_address_str_src) = self.get_pointer_argument_size(&trimmed_parameter);
-                        let arg = args[0];
-                        if let Some((start_char, end_char)) = arg.chars().next().zip(arg.chars().rev().next()) {
-                            if (start_char == '"' && end_char == '"') || (start_char == '\'' && end_char == '\'') {
-                                println!("[PRINT]@[IP={ip}]:\t{arg}\n");    
+                        if let Some((start_char, end_char)) = parameter.chars().next().zip(parameter.chars().rev().next()) {
+                            if start_char == '\'' && end_char == '\'' {
+                                println!("[PRINT]@[IP={ip}]:\t{parameter}\n");    
                                 continue;          
                             }
                         }
 
-                        let (src_value, _) = self.parse_value_from_parameter(memory_address_str_src, size)?;
 
-                        if args.len() == 2 {
+                        let (size, memory_address_str_src) = self.get_pointer_argument_size(&trimmed_parameter);
+                        let (src_value, _) = self.parse_value_from_parameter(memory_address_str_src, size)?;
+                        if args.into_iter().skip(2).next() == Some("char") {
                             if let Some(src_value_char) = std::char::from_u32(src_value) {
                                 println!("[PRINT]@[IP={ip}] {parameter}: {0}\n", src_value_char);
                             }
@@ -700,7 +734,6 @@ impl Engine {
                             _ => return Err(ErrorCode::InvalidValue("Invalid Variable Size".to_string()))
                         };
                         let mut bytes: Vec<u32> = Vec::new();
-
                         for (_, &arg) in rest.iter().enumerate() {
                             // Check if argument is a string literal and remove surrounding quotes
                             if let Some((start_char, end_char)) = arg.chars().next().zip(arg.chars().rev().next()) {

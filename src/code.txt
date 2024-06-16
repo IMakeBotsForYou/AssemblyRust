@@ -1,10 +1,10 @@
-arr db, 4, 9, 4, 8, 1, 2, 37, 1, 255
+arr db, 'MANY LETTERS, INCLUDING SPACES', 255
 
 find_length:
    inc BX            ; Increment counter
    cmp [arr+BX], 255 ; Compare to array-termination-character (set to 255)
    jne find_length   ; Go back if haven't found terminating character
-   print BX, [arr]   ; Print N (length of array) bytes
+   print BX, char [arr]   ; Print N (length of array) bytes
    dec BX            ; Decrease length counter by 1 for ease of access later
    mov DX, 0         ; XOR DX, DX
    jmp while_outer   ; Start loop
@@ -32,4 +32,5 @@ flip_two:
 
 exit:
    inc BX   ; Bring BX back to its original size
-   print BX, [arr] ; Print N (length of array) bytes
+   print BX, char [arr] ; Print N (length of array) bytes  
+   print 'yippie yippie'
