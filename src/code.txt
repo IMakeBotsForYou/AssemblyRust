@@ -23,7 +23,7 @@ while_inner:
    mov AX, WORD PTR [arr+CX] ; More current and next item to AX for ease of access
    cmp AL, AH      ; Compare current and next item
    jl flip_two     ; If we need to flip, flip
-   jbe while_inner ; If not, go back to loop
+   jae while_inner ; If not, go back to loop
  
 flip_two:
   mov [arr+CX], AL   ; AH = First item, AL = second item
