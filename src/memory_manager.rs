@@ -50,15 +50,15 @@ impl MemoryManager {
         match size {
             VariableSize::Byte => {
                 self.set_byte(self.stack_pointer, value as u8)?;
-                self.stack_pointer += 1;
+                self.stack_pointer -= 1;
             }
             VariableSize::Word => {
-                self.set_word(self.stack_pointer, value as u16)?;
-                self.stack_pointer += 2;
+                self.set_word(self.stack_pointer-1, value as u16)?;
+                self.stack_pointer -= 2;
             },
             VariableSize::DoubleWord => {
-                self.set_dword(self.stack_pointer, value)?;
-                self.stack_pointer += 4;
+                self.set_dword(self.stack_pointer-3, value)?;
+                self.stack_pointer -= 4;
             }
         }
         Ok(())
@@ -67,18 +67,18 @@ impl MemoryManager {
     pub fn pop_from_stack(&mut self, size: VariableSize) -> Result<u32, ErrorCode> {
         let result = match size {
             VariableSize::Byte => {
-                let value = self.get_byte(self.stack_pointer)? as u32;
-                self.stack_pointer -= 1;
+                let value = self.get_byte(self.stack_pointer+1)? as u32;
+                self.stack_pointer += 1;
                 value
             },
             VariableSize::Word => {
-                let value = self.get_word(self.stack_pointer)? as u32;
-                self.stack_pointer -= 2;
+                let value = self.get_word(self.stack_pointer+1)? as u32;
+                self.stack_pointer += 2;
                 value
             },
             VariableSize::DoubleWord => {
-                let value = self.get_dword(self.stack_pointer)?;
-                self.stack_pointer -= 4;
+                let value = self.get_dword(self.stack_pointer+1)?;
+                self.stack_pointer += 4;
                 value
             }
         };
@@ -232,7 +232,7 @@ impl MemoryManager {
                 let index_value = if let Some(v) = self.get_register_value(registers, index_part) {
                     v as usize
                 } else {
-                    parse_string_to_usize(index_part).ok_or(ErrorCode::InvalidRegister)?
+                    parse_string_to_usize(index_part).ok_or(ErrorCode::InvalidRegister)? as usize
                 };
     
                 // Parse the scale value
@@ -243,9 +243,9 @@ impl MemoryManager {
     
                 // Adjust the effective address based on the scale and sign
                 effective_address += if is_negative {
-                    - ((index_value * scale_value) as isize)
+                    - ((index_value * (scale_value as usize)) as isize)
                 } else {
-                    (index_value * scale_value) as isize
+                    (index_value * (scale_value as usize)) as isize
                 };
     
             // Handle displacement, hexadecimal values, or variable names

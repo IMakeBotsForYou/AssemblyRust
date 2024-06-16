@@ -27,7 +27,7 @@ impl LineProcessor {
             }
 
             if verbose {
-                println!("[LINE] [{}] {}", self.ip, line);
+                println!("[IP] [{}] {}", self.ip, line);
             }
 
             let instruction = without_comment.split_whitespace().next().unwrap_or("NOP").to_string();
@@ -53,6 +53,7 @@ impl LineProcessor {
         None
 
     }
+    
     pub fn set_ip(&mut self, value: usize) {
         self.ip = value;
     }

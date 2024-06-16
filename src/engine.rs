@@ -136,7 +136,6 @@ impl Engine {
             ["WORD", "PTR", arg] => (Some(VariableSize::Word), *arg),
             ["DWORD", "PTR", arg] => (Some(VariableSize::DoubleWord), *arg),
             [arg] => {
-
                 if let Ok((_, size)) = self.parse_value_from_parameter(*arg, None) {
                     (Some(size), *arg)
                 } else {
@@ -154,7 +153,7 @@ impl Engine {
                 VariableSize::Byte
             } else if value > u8::MAX.into() && value <= u16::MAX.into() {
                 VariableSize::Word
-            }  else if value > u16::MAX.into() && value <= u32::MAX as usize {
+            }  else if value > u16::MAX.into() && value <= u32::MAX {
                 VariableSize::DoubleWord
             } else {
                 return Err(ErrorCode::InvalidValue(format!("value {value} is outside of allowed range. 0-u32::MAX")));
@@ -242,6 +241,7 @@ impl Engine {
         loop {
             let ip = self.registers[get_register("IP")].get_word() as usize;
             let line_option = self.lines.next(verbose);
+            self.lines.update_ip_register(&mut self.registers[get_register("IP")]);
 
             if line_option.is_none() {
                 break;
@@ -381,9 +381,19 @@ impl Engine {
                     ["mov", reg, parameter] if self.is_valid_register(*reg) => {
                         let (size_option, memory_address) = self.get_pointer_argument_size(parameter);
                         let (constant, assumed_size) = self.parse_value_from_parameter(memory_address, size_option)?;
+ 
+                        let is_immediate: bool = parse_string_to_usize(parameter).is_some();
+
                         if let Some(reg_size) = get_register_size(reg) {
-                            if assumed_size.value() > reg_size.value() {
-                                return Err(ErrorCode::InvalidValue(format!("Value {parameter} cannot fit in {reg}")));
+                            let assumed_size_v = assumed_size.value();
+                            let reg_size_v = reg_size.value();
+                            let invalid = if is_immediate {
+                                assumed_size_v > reg_size_v
+                            } else {
+                                assumed_size_v != reg_size_v
+                            };
+                            if invalid {
+                                return Err(ErrorCode::InvalidValue(format!("Source {parameter} of size ({assumed_size_v}) bytes bytes and destination {reg} of size ({reg_size_v}) bytes are not compatible")));
                             }
                         }
                         self.mov_reg_const(reg, constant)?;
@@ -395,16 +405,14 @@ impl Engine {
                         if self.memory_manager.is_memory_operand(parameter) {
                             return Err(ErrorCode::InvalidValue(format!("Direct memory transfer is not supported.")));
                         }
+                        let (size_option_src, _) = self.get_pointer_argument_size(parameter);
 
-                        let (size_option_dst, _) = self.get_pointer_argument_size(parameter);
-
-
-                        let (size_option_src, sliced_memory_string) = self.get_pointer_argument_size(memory_address);
+                        let (size_option_dst, sliced_memory_string) = self.get_pointer_argument_size(memory_address);
 
                         if let Some(size_dst) = size_option_dst {
                             if let Some(size_src) = size_option_src {
                                 if size_dst != size_src {
-                                    return Err(ErrorCode::InvalidPointer(format!("Source ({parameter}) and destination ({memory_address}) size don't match.")));
+                                    return Err(ErrorCode::InvalidValue(format!("Source {parameter} of size ({}) bytes bytes and destination {memory_address} of size ({}) bytes are not compatible", size_src.value(), size_dst.value())));
                                 }
                             }
                         };
@@ -423,7 +431,7 @@ impl Engine {
                                 if assumed_size_parameter != assumed_size_memory {
                                     return Err(
                                         ErrorCode::InvalidValue(
-                                            format!("Target memory pointer size ({}) doesn't match second parameter size ({})",
+                                            format!("Target memory pointer size ({}) bytes doesn't match second parameter size ({}) bytes",
                                                             assumed_size_memory.value(),          assumed_size_parameter.value())
                                         )
                                     );
@@ -449,14 +457,22 @@ impl Engine {
                     //         OP              REG          MEM/REG/CONST
                     [op @ ("add"|"sub"), reg, parameter] if self.is_valid_register(reg) => {
                         let is_addition = *op == "add";
+                        let is_immediate = parse_string_to_usize(parameter).is_some();
                                                                     // No "WORD PTR" etc.
                         let (size_option, trimmed_parameter) = self.get_pointer_argument_size(parameter);
         
-                        let (constant, assumed_size)= self.parse_value_from_parameter(trimmed_parameter, size_option)?;
+                        let (constant, assumed_size) = self.parse_value_from_parameter(trimmed_parameter, size_option)?;
 
                         if let Some(reg_size) = get_register_size(reg) {
-                            if assumed_size.value() != reg_size.value() {
-                                return Err(ErrorCode::InvalidValue(format!("Value {parameter} cannot fit in {reg}")));
+                            let assumed_size_v = assumed_size.value();
+                            let reg_size_v = reg_size.value();
+                            let invalid = if is_immediate {
+                                assumed_size_v > reg_size_v
+                            } else {
+                                assumed_size_v != reg_size_v
+                            };
+                            if invalid {
+                                return Err(ErrorCode::InvalidValue(format!("Source {parameter} of size ({assumed_size_v}) bytes bytes and destination {reg} of size ({reg_size_v}) bytes are not compatible")));
                             }
                         }
                         self.add_or_sub_reg_const(reg, constant, is_addition)?;
@@ -464,6 +480,7 @@ impl Engine {
                     //         OP               MEM          REG/CONST
                     [op @ ("add"|"sub"), memory_address, parameter] => {
                         let is_addition = *op == "add";
+                        let is_immediate: bool = parse_string_to_usize(parameter).is_some();
 
                         if self.memory_manager.is_memory_operand(parameter) {
                             return Err(ErrorCode::InvalidValue(format!("Direct memory transfer is not supported.")));
@@ -475,8 +492,14 @@ impl Engine {
                         if size_option_src.is_some() && size_option_dest.is_some() {
                             let a = size_option_src.unwrap().value();
                             let b = size_option_dest.unwrap().value();
-                            if a > b {
-                                return Err(ErrorCode::InvalidPointer(format!("Source size {:?} can't fit in destination size {:?}.", size_option_src ,size_option_dest)))
+
+                            let invalid = if is_immediate {
+                                a > b
+                            } else {
+                                a != b
+                            };
+                            if invalid {
+                                return Err(ErrorCode::InvalidValue(format!("Source {parameter} of size ({a}) bytes bytes and destination {memory_address} of size ({b}) bytes are not compatible")));
                             }
                         }
 
@@ -567,7 +590,6 @@ impl Engine {
 
                     // PRINT  Instructions
                     ["print", parameter] => { 
-                        // Determine size of the operand
 
                         let args: Vec<&str> = parameter.split_whitespace().collect();
                         let trimmed_parameter = if args[0] == "char" {
@@ -578,13 +600,22 @@ impl Engine {
 
 
                         let (size, memory_address_str_src) = self.get_pointer_argument_size(&trimmed_parameter);
+                        let arg = args[0];
+                        if let Some((start_char, end_char)) = arg.chars().next().zip(arg.chars().rev().next()) {
+                            if (start_char == '"' && end_char == '"') || (start_char == '\'' && end_char == '\'') {
+                                println!("[PRINT]@[IP={ip}]:\t{arg}\n");    
+                                continue;          
+                            }
+                        }
+
                         let (src_value, _) = self.parse_value_from_parameter(memory_address_str_src, size)?;
 
-                        if args.len() == 2{
+                        if args.len() == 2 {
                             if let Some(src_value_char) = std::char::from_u32(src_value) {
                                 println!("[PRINT]@[IP={ip}] {parameter}: {0}\n", src_value_char);
                             }
                         } else {
+                            // Check if argument is a string literal and remove surrounding quotes
                             println!("[PRINT]@[IP={ip}] {parameter}: {0}\n", src_value);
                         }            
                     },
@@ -603,58 +634,56 @@ impl Engine {
                         let (size_option_src, trimmed_address) = self.get_pointer_argument_size(memory_address);
                         let size = size_option_src.unwrap_or(VariableSize::Byte);
                         if let Ok(parsed_address) = self.memory_manager.calculate_effective_address(trimmed_address, &self.registers, &self.labels, true) {
-                            if let Some(value) = parse_string_to_usize(*number) {
+                            let (value, _) = self.parse_value_from_parameter(*number, None)?;
+                            self.memory_manager.check_memory_address(parsed_address+(value as usize)*size.value())?;
+                            let ip = self.registers[get_register("IP")].get_word();
+                            print!("[PRINT]@[IP={ip}][{parsed_address}..{}]:\t[", parsed_address+(value as usize)-1);
+                            for i in 0..value {
+                                match size {
+                                    VariableSize::Byte => {
+                                        let src_value = self.memory_manager.get_byte(parsed_address+(i as usize)*size.value())?;
 
-                                self.memory_manager.check_memory_address(parsed_address+value*size.value())?;
-
-                                let ip = self.registers[get_register("IP")].get_word();
-                                print!("[PRINT]@[IP={ip}][{parsed_address}..{}]:\t[", parsed_address+value-1);
-                                for i in 0..value {
-                                    match size {
-                                        VariableSize::Byte => {
-                                            let src_value = self.memory_manager.get_byte(parsed_address+i*size.value())?;
-
-                                            if ch {
-                                                if let Some(src_value_char) = std::char::from_u32(src_value as u32) {
-                                                    print!("{0}", src_value_char);
-                                                } else {
-                                                    print!("{}", format!("{: >width$}", src_value, width=4));
-                                                }
+                                        if ch {
+                                            if let Some(src_value_char) = std::char::from_u32(src_value as u32) {
+                                                print!("{0}", src_value_char);
                                             } else {
                                                 print!("{}", format!("{: >width$}", src_value, width=4));
                                             }
-                                        },
-                                        VariableSize::Word => {
-                                            let src_value = self.memory_manager.get_word(parsed_address+i*size.value())?;
-                                            if ch {
-                                                if let Some(src_value_char) = std::char::from_u32(src_value as u32) {
-                                                    print!("{0}", src_value_char);
-                                                } else {
-                                                    print!("{}", format!("{: >width$}", src_value, width=4));
-                                                }
+                                        } else {
+                                            print!("{}", format!("{: >width$}", src_value, width=4));
+                                        }
+                                    },
+                                    VariableSize::Word => {
+                                        let src_value = self.memory_manager.get_word(parsed_address+(i as usize)*size.value())?;
+                                        if ch {
+                                            if let Some(src_value_char) = std::char::from_u32(src_value as u32) {
+                                                print!("{0}", src_value_char);
                                             } else {
                                                 print!("{}", format!("{: >width$}", src_value, width=4));
-                                            }                                    
-                                        },
-                                        VariableSize::DoubleWord => {
-                                            let src_value = self.memory_manager.get_dword(parsed_address+i*size.value())?;
-                                            if ch {
-                                                if let Some(src_value_char) = std::char::from_u32(src_value) {
-                                                    print!("{0}", src_value_char);
-                                                } else {
-                                                    print!("{0} ", src_value);
-                                                }
+                                            }
+                                        } else {
+                                            print!("{}", format!("{: >width$}", src_value, width=4));
+                                        }                                    
+                                    },
+                                    VariableSize::DoubleWord => {
+                                        let src_value = self.memory_manager.get_dword(parsed_address+(i as usize)*size.value())?;
+                                        if ch {
+                                            if let Some(src_value_char) = std::char::from_u32(src_value) {
+                                                print!("{0}", src_value_char);
                                             } else {
                                                 print!("{0} ", src_value);
-                                            }  
-                                        },
-
-                                    }
+                                            }
+                                        } else {
+                                            print!("{0} ", src_value);
+                                        }  
+                                    },  
                                 }
-                                println!("]");
-                            } else {
-                                return Err(ErrorCode::InvalidValue(format!("Integer {number} could not be parsed.")))
                             }
+                            println!("]");
+
+                        // } else {
+                        //     return Err(ErrorCode::InvalidValue(format!("Integer {number} could not be parsed.")))
+                        // }
                         } else {
                             return Err(ErrorCode::InvalidValue(format!("Memory address {memory_address} could not be parsed.")))
                         }
@@ -711,8 +740,9 @@ impl Engine {
                     },
                     // JUMPS
                     [_flag @ ("je"|"jz"|"jne"|"jnz"), label] => {
-                        let ne = *_flag == "jne" || *_flag == "jnz";
-                        if !(ne ^ self.is_flag_on(Flag::Zero)) {
+
+                        let equal = *_flag == "je" || *_flag == "jz";
+                        if equal != self.is_flag_on(Flag::Zero) {
                             continue;
                         }
                         if let Err(error) = self.jump_to(label) {     
@@ -729,7 +759,10 @@ impl Engine {
                     [_flag @ ("jg" | "jge"), label] => {
                         let is_jg = *_flag == "jg";
 
-                        if !(is_jg && (self.is_flag_on(Flag::Sign) ^ self.is_flag_on(Flag::Overflow))) {
+                        if is_jg && self.is_flag_on(Flag::Zero) {
+                            continue;
+                        }
+                        if self.is_flag_on(Flag::Sign) != self.is_flag_on(Flag::Overflow) {
                             continue;
                         }
                 
@@ -745,7 +778,11 @@ impl Engine {
                     [_flag @ ("jl" | "jle"), label] => {
                         let is_jl = *_flag == "jl";
 
-                        if !(is_jl && (self.is_flag_on(Flag::Sign) ^ self.is_flag_on(Flag::Overflow))) {
+                        if is_jl && self.is_flag_on(Flag::Zero) {
+                            continue;
+                        }
+
+                        if self.is_flag_on(Flag::Sign) == self.is_flag_on(Flag::Overflow) {
                             continue;
                         }
                 
@@ -759,9 +796,9 @@ impl Engine {
                         }
                     }
                     [_flag @ ("ja" | "jae"), label] => {
-                        let is_jl = *_flag == "ja";
+                        let is_ja = *_flag == "ja";
 
-                        if !(is_jl && (self.is_flag_on(Flag::Carry) ^ self.is_flag_on(Flag::Zero))) {
+                        if self.is_flag_on(Flag::Carry) ||(is_ja && self.is_flag_on(Flag::Zero)) {
                             continue;
                         }
                 
@@ -775,9 +812,9 @@ impl Engine {
                         }
                     }
                     [_flag @ ("jb" | "jbe"), label] => {
-                        let is_jbe = *_flag == "jbe";
+                        let is_jb = *_flag == "jb";
 
-                        if self.is_flag_on(Flag::Carry) || (is_jbe && self.is_flag_on(Flag::Zero)) {
+                        if self.is_flag_on(Flag::Carry) || (is_jb && self.is_flag_on(Flag::Zero)) {
                             continue;
                         }
 
@@ -803,7 +840,7 @@ impl Engine {
 
                         if first_operand_size != second_operand_size {
                             return Err(ErrorCode::InvalidValue(
-                                            format!("Target memory pointer size ({}) doesn't match second parameter size ({})",
+                                            format!("Target memory pointer size ({}) bytes doesn't match second parameter size ({}) bytes",
                                                             first_operand_size.value(),          second_operand_size.value())
                                         ))
                         }
@@ -818,7 +855,6 @@ impl Engine {
                         self.set_flag(Flag::Overflow, (first_value < 0 && second_value > 0 && result > 0) || (first_value > 0 && second_value < 0 && result < 0));
                         self.set_flag(Flag::Sign, result < 0);
                         self.set_flag(Flag::Parity, result.count_ones() % 2 == 0);
-                    
                     },
                     // STACK OPERATIONS
                     ["push", parameter] => {
@@ -835,9 +871,7 @@ impl Engine {
                         let (size_option, trimmed_parameter) = self.get_pointer_argument_size(parameter);
 
                         let (_, size) = self.parse_value_from_parameter(trimmed_parameter, size_option)?;
-                        
                         let popped_value = self.memory_manager.pop_from_stack(size)?;
-
                         if self.is_valid_register(parameter) {
                             match size {
                                 VariableSize::Byte => return Err(ErrorCode::InvalidValue("POP can only receive a 16-bit or 32-bit parameter.".to_string())),
@@ -876,9 +910,7 @@ impl Engine {
                     },
                 }
             }
-
-            self.lines.update_ip_register(&mut self.registers[get_register("IP")]);
-
+            self.lines.set_ip(self.registers[get_register("IP")].get_word() as usize);
         }
         Ok(())
     }
@@ -886,6 +918,7 @@ impl Engine {
     fn jump_to(&mut self, label: &&str) -> Result<(), ErrorCode> {
         if let Some(address) = self.labels.get(*label) {
             self.lines.set_ip(*address);
+            self.registers[get_register("IP")].load_word(*address as u16);
         } else {
             let (size_option, trimmed) = self.get_pointer_argument_size(label);
 
@@ -909,7 +942,8 @@ impl Engine {
                 ));
             }
 
-            self.lines.set_ip(target as usize);
+            self.registers[get_register("IP")].load_word(target as u16);
+            self.lines.set_ip(target);
 
         }
         Ok(())
@@ -921,7 +955,6 @@ impl Engine {
         let value = self.get_register_value("FLAG").unwrap() as u16;
         value & flag.value() != 0
     }
-
 
     // MOV operations
     // REG <- Reg, Const, Var, Mem

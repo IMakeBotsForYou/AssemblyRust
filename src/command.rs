@@ -255,7 +255,7 @@ Syntax:
             Command::Lea => {
                 "The 'lea' command loads the effective address of the operand into a register.
 Syntax:
-    lea <reg>, [[<mem>]]".to_string()
+    lea <reg>, [<mem>]".to_string()
             },
             Command::Add => {
                 "The 'add' command adds two operands.
