@@ -1,0 +1,8 @@
+mov AL, -1
+mov AH, 5
+imul AH
+mov BX, AX
+mov CX, 2
+mov AX, -10 ; 
+mov DX, -1  ; Make DX:AX = -10
+idiv CX

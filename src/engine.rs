@@ -183,14 +183,15 @@ impl Engine {
     pub fn parse_value_from_parameter(&self, parameter: &str, mut size: Option<VariableSize>) -> Result<(u32, VariableSize), ErrorCode> {
         if let Some(value) = parse_string_to_usize(parameter){
             // Constant
-            let assumed_size = if value <= u8::MAX.into()  {
+            let vi32 = value as i32;
+            let assumed_size = if vi32 >= i8::MIN.into() || vi32 <= u8::MAX.into() {
                 VariableSize::Byte
-            } else if value > u8::MAX.into() && value <= u16::MAX.into() {
+            } else if vi32 >= i16::MIN.into() || vi32 <= u16::MAX.into() {
                 VariableSize::Word
-            }  else if value > u16::MAX.into() && value <= u32::MAX {
+            } else if vi32 >= i32::MIN.into() || value <= u32::MAX {
                 VariableSize::DoubleWord
             } else {
-                return Err(ErrorCode::InvalidValue(format!("value {value} is outside of allowed range. 0-u32::MAX")));
+                return Err(ErrorCode::InvalidValue(format!("value {} is outside of allowed range. 0-u32::MAX", value)));
             };
 
             Ok((value as u32, assumed_size))
@@ -613,7 +614,7 @@ impl Engine {
 
                         let size = size_option_src.unwrap_or(backup_size);
 
-                        self.div_value(src_value, size, *op == "imul")?;
+                        self.div_value(src_value, size, *op == "idiv")?;
                     },
                     [op @ ("div" | "idiv"), _rest @ ..] => {
                         let signed = *op == "idiv";
@@ -1270,14 +1271,11 @@ impl Engine {
         if src_value == 0 {
             return Err(ErrorCode::DivisionByZero);
         }
-
         let (quotient, remainder) = if signed {
             let dividend_signed = dividend as i32;
             let src_signed = src_value as i16;
-
             let (q, r) = (dividend_signed / src_signed as i32, dividend_signed % src_signed as i32);
             (q as u16, r as u16)
-
         } else {
             ((dividend / src_value as u32) as u16, (dividend % src_value as u32) as u16)
         };

@@ -1,0 +1,7 @@
+mov AH, 1
+add AH, 1
+mov BX, AX
+add BX, 100
+mov CL, BH
+sub CL, 1
+sub BL, 99

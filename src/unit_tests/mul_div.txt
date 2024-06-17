@@ -1,0 +1,9 @@
+mov AH, 5
+mov AL, 2
+mul AH
+mov SI, AX
+mov AL, 5
+mov DI, AX
+mov AX, 10
+mov BX, 3
+div BX
