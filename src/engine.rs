@@ -115,7 +115,7 @@ impl Engine {
 
     pub fn get_register_value(&self, name: &str) -> Result<u32, ErrorCode> {
         if !self.is_valid_register(name) {
-            return Err(ErrorCode::InvalidRegister);
+            return Err(ErrorCode::InvalidRegister(name.to_string()));
         }
         let value = self.registers[get_register(name)].get_dword();
         match name {
@@ -123,7 +123,7 @@ impl Engine {
             "AH"   | "BH"  | "CH" | "DH" => Ok((value & 0x0000FF00) >> 8),
             "FLAG" | "AX"  | "BX" | "CX"  | "DX" | "SI" | "DI" | "SP"  => Ok(value & 0x0000FFFF), 
             "ESI"  | "EDI" | "IP" | "EAX" | "EBX" | "ECX" | "EDX"  => Ok(value), 
-            _ => Err(ErrorCode::InvalidRegister)
+            _ => Err(ErrorCode::InvalidRegister(name.to_string()))
         }
     }
     
@@ -155,9 +155,9 @@ impl Engine {
     }
 
     fn save_label(&mut self, name: String) -> Result<(), ErrorCode> {
-
+        let name_copy = name.clone();
         if self.labels.insert(name, self.get_register_value("IP")? as usize).is_some() {
-            return Err(ErrorCode::VariableAlreadyExists);
+            return Err(ErrorCode::VariableAlreadyExists(name_copy));
         } else {
             Ok(())
         }
@@ -201,13 +201,13 @@ impl Engine {
                 "AL"|"AH"|"BL"|"BH"|"CL"|"CH"|"DL"|"DH" => {
                     VariableSize::Byte
                 },
-                "EAX"|"EAB"|"EAC"|"EAD"|"ESI"|"EDI" => {
+                "EAX"|"EBX"|"ECX"|"EDX"|"ESI"|"EDI" => {
                     VariableSize::DoubleWord
                 },
                 "AX"|"BX"|"CX"|"DX"|"SI"|"DI"|"FLAG"|"IP"|"SP"  => {
                     VariableSize::Word
                 },
-                _ => return Err(ErrorCode::InvalidRegister) // Unreachable
+                _ => return Err(ErrorCode::InvalidRegister(parameter.to_string())) // Unreachable
             };
             Ok((value, assumed_size))
         } else if let Ok(parsed_address) = self.memory_manager.calculate_effective_address(parameter, &self.registers, &self.labels, true) {
@@ -402,7 +402,7 @@ impl Engine {
                                         self.mov_reg_const(reg, parsed_address as u32)?;
                                     },
                                     _ => {
-                                        return Err(ErrorCode::InvalidRegister);
+                                        return Err(ErrorCode::InvalidRegister(reg.to_string()));
                                     },
                                 }
                             },
@@ -625,7 +625,6 @@ impl Engine {
                         
                         return Err(ErrorCode::InvalidOpcode);
                     },
-
                     // PRINT  Instructions
                     ["print", parameter] => { 
 
@@ -1018,7 +1017,7 @@ impl Engine {
                 self.registers[get_register(dest)].load_dword(constant);
                 VariableSize::DoubleWord
             }
-            _ => return Err(ErrorCode::InvalidRegister)
+            _ => return Err(ErrorCode::InvalidRegister(dest.to_string()))
         };
         self.set_flags(constant as usize, size, false);
         Ok(())
@@ -1070,7 +1069,7 @@ impl Engine {
 
                 (sum as u32, overflowed, VariableSize::DoubleWord)
             },
-            _ => return Err(ErrorCode::InvalidRegister),
+            _ => return Err(ErrorCode::InvalidRegister(src.to_string())),
         };
         self.set_flags(result as usize, size, overflowed);
         Ok(())
@@ -1117,7 +1116,7 @@ impl Engine {
                 self.set_flags(sum as usize,VariableSize::DoubleWord, overflowed);
             },
             _ => {
-                return Err(ErrorCode::InvalidRegister);
+                return Err(ErrorCode::InvalidRegister(dest.to_string()));
             }
         };
         Ok(())
@@ -1143,7 +1142,7 @@ impl Engine {
                 self.registers[get_register(register)].load_dword(value.try_into().unwrap());
                 Ok(())
             }
-            _ => Err(ErrorCode::InvalidRegister)
+            _ => Err(ErrorCode::InvalidRegister(register.to_string()))
         }
     }
 

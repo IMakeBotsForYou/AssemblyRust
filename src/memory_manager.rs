@@ -93,7 +93,7 @@ impl MemoryManager {
         let length = data.len() * multiplier;
 
         if self.variable_pointers.get(&variable_name).is_some() {
-            return Err(ErrorCode::VariableAlreadyExists);
+            return Err(ErrorCode::VariableAlreadyExists(variable_name));
         }
         if let Ok(location) = self.find_free_block(length) {
             // Save the metadata with the correct start_index
@@ -236,7 +236,7 @@ impl MemoryManager {
                 let index_value = if let Some(v) = self.get_register_value(registers, index_part) {
                     v as usize
                 } else {
-                    parse_string_to_usize(index_part).ok_or(ErrorCode::InvalidRegister)? as usize
+                    parse_string_to_usize(index_part).ok_or(ErrorCode::InvalidRegister(index_part.to_string()))? as usize
                 };
     
                 // Parse the scale value
@@ -256,7 +256,7 @@ impl MemoryManager {
             } else if let Some(value) = self.parse_value(part, is_negative, registers, labels, label_vars) {
                 effective_address += value;
             } else {
-                return Err(ErrorCode::InvalidRegister);
+                return Err(ErrorCode::InvalidRegister(part.to_string()));
             }
         }
     

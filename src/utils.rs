@@ -11,6 +11,7 @@ use std::{
     },
     fs::File
 };
+use crate::Engine;
 
 pub fn read_lines_from_file(filename: &str) -> io::Result<Vec<String>> {
     let file = File::open(filename)?;
@@ -41,3 +42,25 @@ pub fn parse_string_to_usize(value: &str) -> Option<u32> {
     parsed_value
 }
 
+pub fn initialize_engine(file_path: &str) -> Engine {
+    match Engine::new(file_path) {
+        Ok(engine) => engine,
+        Err(e) => panic!("Could not run at {}.\n{}", file_path, e),
+    }
+}
+
+pub fn execute_engine(assembly: &mut Engine, verbose: bool) {
+    let result = assembly.execute(verbose);
+    match result {
+        Ok(_) => (),
+        Err(e) => {
+            let ip = assembly.get_register_value("IP").expect("Couldn't get IP");
+            panic!("Errored during execution.\n{}\nLINE: {}", e, ip);
+        },
+    }
+}
+
+pub fn verify_memory(assembly: &Engine, expected_memory: &[u8], length: usize) {
+    let memory = assembly.get_memory(length);
+    assert_eq!(memory, expected_memory);
+}

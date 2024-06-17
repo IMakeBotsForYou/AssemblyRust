@@ -25,31 +25,24 @@ mod utils;
 // #[allow(dead_code)]
 // mod compiler;
 
+#[allow(unused_imports)]
+use crate::utils::{
+            initialize_engine,
+            execute_engine,
+            verify_memory
+	     };
+
+
+
 fn main() -> io::Result<()>  {
     // Initialize the engine
-    let mut assembly: Engine;
 
     let file_path = std::env::args().skip(1).next().unwrap_or("code.txt".to_string());
     let _verbose  = std::env::args().skip(2).next().unwrap_or("false".to_string()).to_lowercase();
     let verbose = _verbose == "true".to_string() || _verbose == "t".to_string();
-    match Engine::new(&file_path) {
-        Ok(v) => assembly = v,
-        Err(_) => {
-            println!("Could not parse file.");
-            return Ok(());
-        },
-    }
 
-    // Execute the engine and handle any errors
-    match assembly.execute(verbose) {
-        Ok(()) => {
-            println!("Execution completed successfully.");
-        }
-        Err(error) => {
-            let ip = assembly.get_register_value("IP").unwrap_or_default();
-            println!("\n{}\nHalted at IP {}.\n", error, ip)
-        }
-    }
+    let mut assembly = initialize_engine(&file_path);
+    execute_engine(&mut assembly, verbose);
 
     // Optionally, print out the registers to verify
     for register in &assembly.registers {
