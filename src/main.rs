@@ -41,8 +41,8 @@ fn main() -> io::Result<()>  {
 
     let mut assembly = initialize_engine(&file_path);
     execute_engine(&mut assembly, debug);
-    if !debug { // already printing every time.
-        println!("{assembly}");
-    }
+    // if !debug { // already printing every time.
+    println!("{assembly}");
+    // }
     Ok(())
 }

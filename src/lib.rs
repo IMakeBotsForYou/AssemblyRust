@@ -53,6 +53,15 @@ mod tests {
 		assert!(assembly.registers[2].get_word() == 2);  // CX
 		assert!(assembly.registers[3].get_word() == 0);  // DX
     }
+	#[test]
+	fn shr_shl() {
+		let mut assembly = initialize_engine("./src/unit_tests/shr_shl.txt");
+		execute_engine(&mut assembly, false);
+	
+		let expected_memory: Vec<u8> = vec![4, 0, 0, 0];
+		verify_memory(&assembly, &expected_memory, 4);
+		assert!(assembly.registers[1].get_word() == 5);
+	}
     #[test]
     fn fibonacci() {
 		let mut assembly = initialize_engine("./src/code_examples/fibonacci.txt");
@@ -87,6 +96,7 @@ mod tests {
 		let expected_memory: Vec<u8> = vec![0, 0, 0, 1, 0, 0, 0, 2, 0, 0, 0, 3, 0, 0, 0, 17];
 		verify_memory(&assembly, &expected_memory, 4 * 4);
 	}
+
 
 
 }

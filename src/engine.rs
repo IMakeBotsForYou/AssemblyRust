@@ -320,7 +320,6 @@ impl Engine {
             }
             let line = line_option.unwrap();
             if debug {
-                pause();
                 clear_screen();
                 if let Some((prev_ip, prev_line)) = buffer {
                     println!("[{}]: {}", prev_ip, prev_line); // Previous
@@ -335,6 +334,7 @@ impl Engine {
                 }
 
                 println!("{}", self);
+                pause();
             }
             
 
@@ -500,11 +500,18 @@ impl Engine {
                     let (size_option_src, _) = self.get_pointer_argument_size(parameter);
 
                     let (size_option_dst, sliced_memory_string) = self.get_pointer_argument_size(memory_address);
-
+                    
+                    let is_immediate = parse_string_to_usize(parameter).is_some();
                     if let Some(size_dst) = size_option_dst {
                         if let Some(size_src) = size_option_src {
-                            if size_dst != size_src {
-                                return Err(ErrorCode::InvalidValue(format!("Source {parameter} of size ({}) bytes bytes and destination {memory_address} of size ({}) bytes are not compatible", size_src.value(), size_dst.value())));
+                            let message = format!("Source {parameter} of size ({}) bytes bytes and destination {memory_address} of size ({}) bytes are not compatible", size_src.value(), size_dst.value());
+                            let is_invalid = if is_immediate {
+                                size_dst.value() < size_src.value()
+                            } else {
+                                size_dst != size_src
+                            };
+                            if is_invalid {
+                                return Err(ErrorCode::InvalidValue(message));
                             }
                         }
                     };
@@ -515,21 +522,13 @@ impl Engine {
                         // Destination is valid address
                         Ok(parsed_address) => {
                             // Get value and size of memory to mov into destination address
-                            let (constant, assumed_size_parameter ) = {
+                            let (constant, _ ) = {
                                 let (v, s) = self.parse_value_from_parameter(parameter, size_option_src)?;
                                 (v, size_option_src.unwrap_or(s))
                             };
-                            let (_, assumed_size_memory) = self.parse_value_from_parameter(sliced_memory_string, size_option_src)?; 
-                            if assumed_size_parameter != assumed_size_memory {
-                                return Err(
-                                    ErrorCode::InvalidValue(
-                                        format!("Target memory pointer size ({}) bytes doesn't match second parameter size ({}) bytes",
-                                                        assumed_size_memory.value(),          assumed_size_parameter.value())
-                                    )
-                                );
-                            }
+                            let (_, assumed_size_memory) = self.parse_value_from_parameter(sliced_memory_string, size_option_dst)?; 
                             
-                            match assumed_size_parameter {
+                            match assumed_size_memory {
                                 VariableSize::Byte => self.memory_manager.set_byte(parsed_address, constant as u8)?,
                                 VariableSize::Word => self.memory_manager.set_word(parsed_address, constant as u16)?,
                                 VariableSize::DoubleWord => self.memory_manager.set_dword(parsed_address, constant as u32)?,
@@ -678,6 +677,175 @@ impl Engine {
                     }
                     
                     return Err(ErrorCode::InvalidOpcode);
+                },
+                             
+                [op @ ("shr" | "shl"), register, parameter] if self.is_valid_register(register)=> {
+                    // Determine size of the operand
+                    /*          
+                    "The 'shr' instruction shifts the bits of the operand to the right.
+                    Syntax:
+                        shr <reg>, <const>
+                        shr [<mem>], <const>
+                        shr <reg>, <cl>
+                        shr [<mem>], <cl>
+                    */
+                    let is_immediate: bool = parse_string_to_usize(parameter).is_some();
+
+                    let is_cl = *parameter == "CL";
+                    let value_src = if is_cl {
+                        self.get_register_value("CL")?
+                    } else if is_immediate {
+                        parse_string_to_usize(parameter).unwrap()
+                    } else {
+                        return Err(ErrorCode::InvalidValue(
+                            format!("Parameter {parameter} can only be an immediate value, or 'CL'")
+                        ));
+                    };
+
+                    let register_size_option = get_register_size(register);
+                    let register_size = match register_size_option {
+                        Some(size) => size,
+                        None => return Err(ErrorCode::InvalidRegister(
+                            format!("{} is an invalid register.", register) // unreachable anyway
+                        )),
+                    };
+                    let is_shr = *op == "shr";
+                    match register_size {
+                        VariableSize::Byte => {
+                            let value_masked = value_src & 0b111; // Mask to 3 bits (0-7)
+                            if value_src > 7 {
+                                println!("[WARNING] Shift Amount is truncated to 3 bits: ({}).", value_masked);
+                            }
+                            let top: bool = register.ends_with("H");
+                            let current_value: u8 = self.registers[get_register(register)].get_byte(top);
+                            let carry_flag = (current_value >> (value_masked - 1)) & 1; // Last bit shifted out
+                            let new_value = if is_shr {
+                                current_value >> value_masked
+                            } else {
+                                current_value << value_masked
+                            };
+                            self.registers[get_register(register)].load_byte(new_value, top);
+                            self.set_flags(new_value as usize, VariableSize::Word, false);
+                            self.set_flag(Flag::Carry, carry_flag == 1);
+                        },
+                        VariableSize::Word => {
+                            let value_masked = value_src & 0b11111; // Mask to 5 bits (0-31)
+                            if value_src > 31 {
+                                println!("[WARNING] Shift Amount is truncated to 5 bits: ({}).", value_masked);
+                            }
+                            let current_value: u16 = self.registers[get_register(register)].get_word();
+                            let carry_flag = (current_value >> (value_masked - 1)) & 1; // Last bit shifted out
+                            let new_value = if is_shr {
+                                current_value >> value_masked
+                            } else {
+                                current_value << value_masked
+                            };
+                            self.registers[get_register(register)].load_word(new_value);
+                            self.set_flags(new_value as usize, VariableSize::Word, false);
+                            self.set_flag(Flag::Carry, carry_flag == 1);
+                        },
+                        VariableSize::DoubleWord => {
+                            let value_masked = value_src & 0b11111; // Mask to 5 bits (0-31)
+                            if value_src > 31 {
+                                println!("[WARNING] Shift Amount is truncated to 5 bits: ({}).", value_masked);
+                            }
+                            let current_value: u32 = self.registers[get_register(register)].get_dword();
+                            let carry_flag = (current_value >> (value_masked - 1)) & 1; // Last bit shifted out
+
+                            let new_value = if is_shr {
+                                current_value >> value_masked
+                            } else {
+                                current_value << value_masked
+                            };
+                            self.registers[get_register(register)].load_dword(new_value);
+                            self.set_flags(new_value as usize, VariableSize::Word, false);
+                            self.set_flag(Flag::Carry, carry_flag == 1);
+                        },
+                    }
+                },
+                [op @ ("shr" | "shl"), memory_address, parameter] => {
+                    // Determine size of the operand
+                    /*          
+                    "The 'shr' instruction shifts the bits of the operand to the right.
+                    Syntax:
+                        shr <reg>, <const>
+                        shr [<mem>], <const>
+                        shr <reg>, <cl>
+                        shr [<mem>], <cl>
+                    */
+                    let is_immediate: bool = parse_string_to_usize(parameter).is_some();
+
+                    let is_cl = *parameter == "CL";
+                    let value_src = if is_cl {
+                        self.get_register_value("CL")?
+                    } else if is_immediate {
+                        parse_string_to_usize(parameter).unwrap()
+                    } else {
+                        return Err(ErrorCode::InvalidValue(
+                            format!("Parameter {parameter} can only be an immediate value, or 'CL'")
+                        ));
+                    };
+
+                    let (size_option_dst, trimmed_dst) = self.get_pointer_argument_size(memory_address);
+                    let (memory_value, size_dst) = self.parse_value_from_parameter(trimmed_dst, size_option_dst)?;
+                        
+
+                    let destination = self.memory_manager.calculate_effective_address(trimmed_dst, &self.registers, &self.labels, true)?;
+
+                    let is_shr = *op == "shr";
+                    // println!("{:?} {}", size_dst, memory_address);
+                    match size_dst {
+                        VariableSize::Byte => {
+                            let value_masked = value_src & 0b111; // Mask to 3 bits (0-7)
+                            if value_src > 7 {
+                                println!("[WARNING] Shift Amount is truncated to 3 bits ({}).", value_masked);
+                            }
+                            let current_value = memory_value as u8;
+                            let carry_flag = (current_value >> (value_masked - 1)) & 1; // Last bit shifted out
+
+                            let new_value = if is_shr {
+                                current_value >> value_masked
+                            } else {
+                                current_value << value_masked
+                            };
+                            self.set_flags(new_value as usize, VariableSize::Word, false);
+                            self.memory_manager.set_byte(destination, new_value)?;
+                            self.set_flag(Flag::Carry, carry_flag == 1);
+                        },
+                        VariableSize::Word => {
+                            let value_masked = value_src & 0b11111; // Mask to 5 bits (0-31)
+                            if value_src > 31 {
+                                println!("[WARNING] Shift Amount is truncated to 5 bits: ({}).", value_masked);
+                            }
+                            let current_value = memory_value as u16;
+                            let carry_flag = (current_value >> (value_masked - 1)) & 1; // Last bit shifted out
+
+                            let new_value = if is_shr {
+                                current_value >> value_masked
+                            } else {
+                                current_value << value_masked
+                            };
+                            self.memory_manager.set_word(destination, new_value)?;
+                            self.set_flags(new_value as usize, VariableSize::Word, false);
+                            self.set_flag(Flag::Carry, carry_flag == 1);
+                        },
+                        VariableSize::DoubleWord => {
+                            let value_masked = value_src & 0b11111; // Mask to 5 bits (0-31)
+                            if value_src > 31 {
+                                println!("[WARNING] Shift Amount is truncated to 5 bits: ({}).", value_masked);
+                            }
+                            let current_value = memory_value as u32;
+                            let carry_flag = (current_value >> (value_masked - 1)) & 1; // Last bit shifted out
+
+                            let new_value = if is_shr {
+                                current_value >> value_masked
+                            } else {
+                                current_value << value_masked
+                            };
+                            self.memory_manager.set_dword(destination, new_value)?;
+                            self.set_flag(Flag::Carry, carry_flag == 1);
+                        },
+                    }
                 },
                 // PRINT  Instructions
                 ["print", parameter] => { 
