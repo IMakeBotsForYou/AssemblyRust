@@ -35,7 +35,7 @@ use crate::utils::{
 fn main() -> io::Result<()>  {
     // Initialize the engine
 
-    let file_path = std::env::args().skip(1).next().unwrap_or("code.txt".to_string());
+    let file_path = std::env::args().skip(1).next().unwrap_or("code.asm".to_string());
     let _debug  = std::env::args().skip(2).next().unwrap_or("false".to_string()).to_lowercase();
     let debug = _debug == "true".to_string() || _debug == "t".to_string();
 
