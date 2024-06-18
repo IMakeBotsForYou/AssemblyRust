@@ -2,18 +2,18 @@ use crate::register::Register;
 
 pub struct LineProcessor {
     lines: Vec<String>,
-    ip: usize
+    ip: usize,
 }
 
 impl LineProcessor {
     pub fn new(lines: Vec<String>) -> Self {
         LineProcessor{
             lines: lines,
-            ip: 0
+            ip: 0,
         }
     }
 
-    pub fn next(&mut self, verbose: bool) -> Option<Vec<String>> {
+    pub fn next(&mut self) -> Option<Vec<String>> {
         while self.ip < self.lines.len() {
             let line = self.lines[self.ip].clone();
             let whole_line = line.trim();
@@ -24,10 +24,6 @@ impl LineProcessor {
             if without_comment.is_empty() {
                 self.ip += 1;
                 continue;
-            }
-
-            if verbose {
-                println!("[IP] [{}] {}", self.ip, line);
             }
 
             let instruction = without_comment.split_whitespace().next().unwrap_or("NOP").to_string();
@@ -61,4 +57,13 @@ impl LineProcessor {
     pub fn update_ip_register(&mut self, ip_register: &mut Register) {
         ip_register.load_word(self.ip as u16);
     }
+
+    pub fn peak(&mut self) -> Option<(Vec<String>, usize)> {
+        let prev_ip = self.ip; // Capture current instruction pointer
+        let res = self.next(); // Get the next instruction
+        let next_ip = self.ip-1; // Capture the updated instruction pointer
+        self.set_ip(prev_ip); // Restore the instruction pointer to its original state
+        res.map(|line| (line, next_ip)) // Return the result along with the updated instruction pointer
+    }
+
 }

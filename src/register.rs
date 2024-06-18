@@ -1,6 +1,6 @@
 
 use crate::variable_metadata::VariableSize;
-
+#[derive(Clone)]
 pub struct Register {
     value: u32,
     pub name: String,

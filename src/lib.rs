@@ -4,7 +4,7 @@ pub mod memory_manager;
 pub mod register;
 pub mod variable_metadata;
 pub mod line_processor;
-pub mod command;
+pub mod instruction;
 pub mod error_code;
 pub mod status;
 pub mod utils;
