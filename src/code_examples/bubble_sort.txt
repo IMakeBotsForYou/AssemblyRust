@@ -1,4 +1,4 @@
-arr db, 4, 9, 4, 8, 1, 2, 37, 1, 255
+arr db, 'zyxwvutsrqponmlkjihgfedcba', 255
 
 find_length:
    inc BX            ; Increment counter
@@ -32,4 +32,4 @@ flip_two:
 
 exit:
    inc BX   ; Bring BX back to its original size
-   print BX, [arr] ; Print N (length of array) bytes
+   print BX, char [arr] ; Print N (length of array) bytes

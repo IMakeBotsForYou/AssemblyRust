@@ -18,6 +18,8 @@ use regex::Regex;
 pub struct MemoryManager {
     memory: Vec<u8>,
     pub variable_pointers: HashMap<String, VariableMetadata>,
+    pub labels: HashMap<String, usize>,
+    pub procs: HashMap<String, (usize, usize)>,
     segments: [usize; 3],
 }
 
@@ -26,6 +28,8 @@ impl MemoryManager {
         MemoryManager {
             memory: vec![0; size],
             variable_pointers: HashMap::new(),
+            labels: HashMap::new(),
+            procs: HashMap::new(),
             segments: seg,
         }
     }
@@ -49,7 +53,7 @@ impl MemoryManager {
             VariableSize::Byte => {
                 let si = si_register.get_word() as usize;
                 self.set_byte(self.memory.len()-si-1, value as u8)?;
-                si_register.load_word(si as u16 +1);
+                si_register.load_word(si as u16 + 1);
             }
             VariableSize::Word => {
                 let si = si_register.get_word() as usize;
@@ -69,23 +73,39 @@ impl MemoryManager {
             VariableSize::Byte => {
                 let si = si_register.get_word() as usize;
                 let value = self.get_byte(self.memory.len()-si)? as u32;
-                si_register.load_word(si as u16 -1 );
+                si_register.load_word(si as u16 - 1);
                 value
             },
             VariableSize::Word => {
                 let si = si_register.get_word() as usize;
-                let value = self.get_word(self.memory.len()-si-1)? as u32;
+                let value = self.get_word(self.memory.len()-si)? as u32;
                 si_register.load_word(si as u16 - 2);
                 value
             },
             VariableSize::DoubleWord => {
                 let si = si_register.get_word() as usize;
-                let value = self.get_dword(self.memory.len()-si-3)?;
+                let value = self.get_dword(self.memory.len()-si)?;
                 si_register.load_word(si as u16 - 4);
                 value
             }
         };
         Ok(result)
+    }
+    pub fn save_label(&mut self, name: String, ip: usize) -> Result<(), ErrorCode> {
+        let name_copy = name.clone();
+        if self.labels.insert(name, ip).is_some() {
+            return Err(ErrorCode::LabelAlreadyExists(name_copy));
+        } else {
+            Ok(())
+        }
+    }
+    pub fn save_proc(&mut self, name: String, start_ip: usize, end_ip: usize) -> Result<(), ErrorCode> {
+        let name_copy = name.clone();
+        if self.procs.insert(name, (start_ip, end_ip)).is_some() {
+            return Err(ErrorCode::LabelAlreadyExists(name_copy));
+        } else {
+            Ok(())
+        }
     }
     pub fn save_variable(&mut self, variable_name: String, data: &[u32], size: VariableSize) -> Result<(), ErrorCode> {
         let multiplier = size.value();
@@ -93,7 +113,7 @@ impl MemoryManager {
         let length = data.len() * multiplier;
 
         if self.variable_pointers.get(&variable_name).is_some() {
-            return Err(ErrorCode::VariableAlreadyExists(variable_name));
+            return Err(ErrorCode::LabelAlreadyExists(variable_name));
         }
         if let Ok(location) = self.find_free_block(length) {
             // Save the metadata with the correct start_index
@@ -130,9 +150,11 @@ impl MemoryManager {
             ))
         }
     }
+    
     fn get_code_segment_displacement(&self) -> usize {
         self.segments[1]
     }
+    
     pub fn find_free_block(&mut self, length: usize) -> Result<usize, ErrorCode> {
         let mut start_index = 0;
 
@@ -210,7 +232,7 @@ impl MemoryManager {
     Effective Address=Base+(Index*Scale)+Displacement
 
      */
-    pub fn calculate_effective_address(&self, mem_operand: &str, registers: &[Register; 10], labels: &HashMap<String, usize>, label_vars: bool) -> Result<usize, ErrorCode> {
+    pub fn calculate_effective_address(&self, mem_operand: &str, registers: &[Register; 10], label_vars: bool) -> Result<usize, ErrorCode> {
         // Ensure the memory operand is valid and remove the square brackets
         if !self.is_memory_operand(mem_operand) {
             return Err(ErrorCode::InvalidPointer("Memory Operand must be enveloped in []".to_string()));
@@ -253,7 +275,7 @@ impl MemoryManager {
                 };
     
             // Handle displacement, hexadecimal values, or variable names
-            } else if let Some(value) = self.parse_value(part, is_negative, registers, labels, label_vars) {
+            } else if let Some(value) = self.parse_value(part, is_negative, registers, label_vars) {
                 effective_address += value;
             } else {
                 return Err(ErrorCode::InvalidRegister(part.to_string()));
@@ -268,7 +290,7 @@ impl MemoryManager {
         Ok(effective_address as usize)
     }
     
-    pub fn parse_value(&self, part: &str, is_negative: bool, registers: &[Register; 10], labels: &HashMap<String, usize>, label_vars: bool) -> Option<isize> {
+    pub fn parse_value(&self, part: &str, is_negative: bool, registers: &[Register; 10], label_vars: bool) -> Option<isize> {
     
         if let Some(value) = parse_string_to_usize(part) {
             if is_negative {
@@ -303,7 +325,7 @@ impl MemoryManager {
             } else {
                 Some(v as isize)
             }
-        } else if let Some(v) = labels.get(part) {
+        } else if let Some(v) = self.labels.get(part) {
                 return Some(*v as isize);
         } else {
             None

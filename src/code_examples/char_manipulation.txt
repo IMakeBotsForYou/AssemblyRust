@@ -1,6 +1,6 @@
 text db, 'ohh the misery', 0
 mov CX, 14
-print 14, [text]
+print 14, char [text]
 loop:
    cmp [text+CX-1], 32 ; space
    je next

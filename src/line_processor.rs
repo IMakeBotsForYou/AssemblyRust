@@ -47,13 +47,14 @@ impl LineProcessor {
             return Some(parts);
         }
         None
-
     }
     
     pub fn set_ip(&mut self, value: usize) {
         self.ip = value;
     }
-
+    pub fn get_ip(&self) -> usize {
+        self.ip
+    }
     pub fn update_ip_register(&mut self, ip_register: &mut Register) {
         ip_register.load_word(self.ip as u16);
     }
@@ -61,7 +62,7 @@ impl LineProcessor {
     pub fn peak(&mut self) -> Option<(Vec<String>, usize)> {
         let prev_ip = self.ip; // Capture current instruction pointer
         let res = self.next(); // Get the next instruction
-        let next_ip = self.ip-1; // Capture the updated instruction pointer
+        let next_ip = self.ip; // Capture the updated instruction pointer
         self.set_ip(prev_ip); // Restore the instruction pointer to its original state
         res.map(|line| (line, next_ip)) // Return the result along with the updated instruction pointer
     }

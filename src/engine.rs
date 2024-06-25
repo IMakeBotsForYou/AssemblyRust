@@ -1,13 +1,13 @@
 use std::{
     io::{
         self,
-        stdin
+        stdin,
+        Write,
     },
-    collections::{HashMap, HashSet},
-    process::Command,
-    // env
+    collections::HashSet,
     fmt,
 };
+
 use crate::{
     error_code::ErrorCode,
     flag::Flag,
@@ -32,17 +32,38 @@ use crate::{
 
 const MEMORY_SIZE: usize = 1024 * 16; // 16 KB
 
-fn clear_screen() {
-    if cfg!(target_os = "windows") {
-        Command::new("cmd")
-            .args(&["/C", "cls"])
-            .status()
-            .expect("Failed to clear screen");
-    } else {
-        Command::new("clear")
-            .status()
-            .expect("Failed to clear screen");
+fn skip_lines(lines_to_skip: usize) -> io::Result<()> {
+    let mut stdout = io::stdout();
+    // Move cursor up by `lines_to_skip` lines without clearing them
+    for _ in 0..lines_to_skip {
+        write!(stdout, "\x1B[B")?;  // ANSI code to move cursor up one line
     }
+
+    // Flush output to ensure everything is printed
+    stdout.flush()?;
+
+    Ok(())
+}
+
+
+fn clear_screen(rows: usize) -> io::Result<()> {
+    let mut stdout = io::stdout();
+
+    // Move the cursor to the beginning of the terminal
+    write!(stdout, "\x1B[H")?;
+
+    // Clear the first N rows
+    for row in 0..rows {
+        // Move the cursor to the beginning of the current row
+        write!(stdout, "\x1B[{};0H", row + 1)?;
+        // Clear the current line
+        write!(stdout, "\x1B[2K")?;
+    }
+    write!(stdout, "\x1B[H")?; // Return to the beginning of the terminal
+    // Make sure all commands are executed
+    stdout.flush()?;
+
+    Ok(())
 }
 
 fn pause() {
@@ -100,7 +121,6 @@ pub struct Engine {
     pub registers: [Register; 10], // A-D, ESI, EDI, P
     memory_manager: MemoryManager, // 16 KB bytes of memory
     // mode: bool, // false = reading data, true = reading code
-    labels: HashMap<String, usize>, // labels to jump to
     // status: Status, // status: ok, error, halted,
     valid_registers: HashSet<String>,
     // interrupts: Vec<Interrupt>
@@ -136,7 +156,6 @@ impl Engine {
                 lines: LineProcessor::new(file_lines),
                 registers: my_registers,
                 memory_manager: MemoryManager::new(MEMORY_SIZE, [ds, cs, ss]),
-                labels: HashMap::new(),
                 valid_registers,
             })
     }
@@ -190,14 +209,7 @@ impl Engine {
         
     }
 
-    fn save_label(&mut self, name: String) -> Result<(), ErrorCode> {
-        let name_copy = name.clone();
-        if self.labels.insert(name, self.get_register_value("IP")? as usize).is_some() {
-            return Err(ErrorCode::VariableAlreadyExists(name_copy));
-        } else {
-            Ok(())
-        }
-    }
+
 
     fn get_pointer_argument_size<'a>(&self, argument: &'a str) -> (Option<VariableSize>, &'a str) {
         let parts: Vec<&str> = argument.split_whitespace().collect();
@@ -247,7 +259,7 @@ impl Engine {
                 _ => return Err(ErrorCode::InvalidRegister(parameter.to_string())) // Unreachable
             };
             Ok((value, assumed_size))
-        } else if let Ok(parsed_address) = self.memory_manager.calculate_effective_address(parameter, &self.registers, &self.labels, true) {
+        } else if let Ok(parsed_address) = self.memory_manager.calculate_effective_address(parameter, &self.registers,  true) {
    
             // Memory (adjust size to pointer size)
             let memory_address_str = parameter.to_string();
@@ -257,7 +269,7 @@ impl Engine {
             if size.is_none() {
                 if let Some(metadata) = self.memory_manager.get_variable(&memory_address_str[1..memory_address_str.len()-1]) {
                     size = Some(metadata.size);
-                } else if let Some(_) = self.labels.get(&memory_address_str[1..memory_address_str.len()-1]) {
+                } else if let Some(_) = self.memory_manager.labels.get(&memory_address_str[1..memory_address_str.len()-1]) {
                     size = Some(VariableSize::Word);
                 }
                 
@@ -284,23 +296,52 @@ impl Engine {
 
     pub fn execute(&mut self, debug: bool) -> Result<(), ErrorCode>{
         // Go over code to get all the labels.
+        let mut in_proc = false;
+        let mut current_proc_start_ip: usize = 0;
+        let mut current_proc_name = String::new();
+        let mut lines_to_skip = 1;
         loop {
             let line_option = self.lines.next();
             if line_option.is_none() {
                 break;
             }
-            
+
             if let Some(line) = line_option {
+                let proc_string = "PROC".to_string();
+                let end_proc_string = "END".to_string();
                 match line.as_slice() {
                     [label] if label.ends_with(":") && self.memory_manager.is_valid_variable_name(&label[..label.len()-1]) => {
                         let no_colon = label[..label.len()-1].to_string();
-                        if self.labels.get(&no_colon).is_some() {
-                            return Err(ErrorCode::InvalidPointer(format!("Label {no_colon} already exists")));
+                        if self.memory_manager.labels.get(&no_colon).is_some() {
+                            return Err(ErrorCode::LabelAlreadyExists(format!("Label {no_colon} already exists")));
                         }
-                        if let Err(error) = self.save_label(no_colon) {
+                        if let Err(error) = self.memory_manager.save_label(no_colon, self.get_register_value("IP")? as usize) {
                             return Err(error);
                         }
                     },
+                    [proc_name, proc] if proc == &proc_string => {
+                        if self.memory_manager.procs.get(proc_name).is_some() {
+                            return Err(ErrorCode::LabelAlreadyExists(format!("Proc {proc_name} already exists")));
+                        }
+                        if in_proc {
+                            return Err(ErrorCode::InvalidOpcode(format!("Cannot start new proc while in another.")));
+                        }
+                        in_proc = true;
+                        current_proc_name = proc_name.clone();
+                        current_proc_start_ip = self.get_register_value("IP")? as usize;
+                    }
+
+                    [proc_name, proc] if proc == &end_proc_string => {
+                        if self.memory_manager.procs.get(proc_name).is_some() {
+                            return Err(ErrorCode::LabelAlreadyExists(format!("Proc {proc_name} already exists")));
+                        }
+                        if !in_proc {
+                            return Err(ErrorCode::InvalidOpcode(format!("Cannot end proc outside of a proc.")));
+                        }
+                        in_proc = false;
+                        let current_proc_end_ip = self.get_register_value("IP")? as usize;
+                        self.memory_manager.procs.insert(current_proc_name.clone(), (current_proc_start_ip+1, current_proc_end_ip+1));
+                    }
                     _ => {}
                 }
             }
@@ -310,33 +351,37 @@ impl Engine {
         self.lines.set_ip(0);
         self.lines.update_ip_register(&mut self.registers[get_register("IP")]);
         let mut buffer: Option<(usize, String)> = None;
+        let _ = clear_screen(100);
         loop {
-            let ip = self.registers[get_register("IP")].get_word().clone() as usize;
             let line_option = self.lines.next();
             self.lines.update_ip_register(&mut self.registers[get_register("IP")]);
+            let ip: usize = self.get_register_value("IP")? as usize;
 
             if line_option.is_none() {
                 break;
             }
             let line = line_option.unwrap();
             if debug {
-                clear_screen();
+                let _ = clear_screen(14);
                 if let Some((prev_ip, prev_line)) = buffer {
                     println!("[{}]: {}", prev_ip, prev_line); // Previous
+                } else {
+                    println!("");
                 }
                 println!("[{}]: {} <- YOU ARE HERE", ip, back_to_str(&line)); // Current
-    
+                
                 if let Some((next_line, next_ip)) = self.lines.peak() {
                     println!("[{}]: {}", next_ip, back_to_str(&next_line)); // Next
                     buffer = Some((ip, back_to_str(&line)));
                 } else {
+                    println!("");
                     buffer = None;
                 }
 
                 println!("{}", self);
+
                 pause();
             }
-            
 
             let combining_inside_quotes: Vec<String> = combine_parts(&line);
             let line_str: Vec<&str> = combining_inside_quotes.iter().map(|s| &**s).collect();
@@ -388,7 +433,7 @@ impl Engine {
                     let inc = *op == "inc";
                     let size = size_option.unwrap_or(VariableSize::Byte);
                     // Calculate effective address
-                    match self.memory_manager.calculate_effective_address(memory_address_str, &self.registers, &self.labels, true) {
+                    match self.memory_manager.calculate_effective_address(memory_address_str, &self.registers, true) {
                         Ok(parsed_address) => {
                             let (current, overflowed) = match size {
                                 VariableSize::Byte => {
@@ -432,18 +477,20 @@ impl Engine {
                     }
                 },
                 ["inc", _rest @ ..] => {
+                    let _ = skip_lines(lines_to_skip);
+                    lines_to_skip += 1;
                     println!("{}", Instruction::get_help_string(Instruction::Inc));
-                    
-                    return Err(ErrorCode::InvalidOpcode);
+                    return Err(ErrorCode::InvalidOpcode(line.join(", ")));
                 },
                 ["dec", _rest @ ..] => {
+                    let _ = skip_lines(lines_to_skip);
+                    lines_to_skip += 1;
                     println!("{}", Instruction::get_help_string(Instruction::Dec));
-                    
-                    return Err(ErrorCode::InvalidOpcode);
+                    return Err(ErrorCode::InvalidOpcode(line.join(", ")));
                 },
                 // LEA
                 ["lea", reg, memory_address] if self.is_valid_register(*reg) && self.memory_manager.is_memory_operand(memory_address) => {
-                    match self.memory_manager.calculate_effective_address(memory_address, &self.registers, &self.labels, true) {
+                    match self.memory_manager.calculate_effective_address(memory_address, &self.registers, true) {
                         Ok(parsed_address) => {
                             // Determine the register size
                             match get_register_size(*reg) {
@@ -464,9 +511,10 @@ impl Engine {
                     }
                 },
                 ["lea", _rest @ ..] => {
+                    let _ = skip_lines(lines_to_skip);
+                    lines_to_skip += 1;
                     println!("{}", Instruction::get_help_string(Instruction::Lea));
-                    
-                    return Err(ErrorCode::InvalidOpcode);
+                    return Err(ErrorCode::InvalidOpcode(line.join(", ")));
                 },
                 // MOV Instructions
                 // OP    REG      MEM/REG/CONST
@@ -518,7 +566,7 @@ impl Engine {
                     
 
                     // Calculate effective address of destination            
-                    match self.memory_manager.calculate_effective_address(sliced_memory_string, &self.registers, &self.labels, true) {
+                    match self.memory_manager.calculate_effective_address(sliced_memory_string, &self.registers, true) {
                         // Destination is valid address
                         Ok(parsed_address) => {
                             // Get value and size of memory to mov into destination address
@@ -540,9 +588,10 @@ impl Engine {
                 },  
                 // HELP COMMAND
                 ["mov", _rest @ ..] => {
+                    let _ = skip_lines(lines_to_skip);
+                    lines_to_skip += 1;
                     println!("{}", Instruction::get_help_string(Instruction::Mov));
-                    
-                    return Err(ErrorCode::InvalidOpcode);
+                    return Err(ErrorCode::InvalidOpcode(line.join(", ")));
                 },
                 // ADD/SUB Instructions
                 //         OP              REG          MEM/REG/CONST
@@ -596,7 +645,7 @@ impl Engine {
 
 
                     // Calculate effective address of destination            
-                    match self.memory_manager.calculate_effective_address(memory_address_str_dest, &self.registers, &self.labels, true) {
+                    match self.memory_manager.calculate_effective_address(memory_address_str_dest, &self.registers, true) {
                         // Destination is valid address
                         Ok(parsed_address) => {
                             // Get value and size of memory to mov into destination address
@@ -621,20 +670,20 @@ impl Engine {
                         },
                         // Destination is not valid address
                         Err(error) => return Err(error)
-                    }
-
-                    
-                    
+                    }                    
                 },
                 ["add", _rest @ ..] => {
+                    let _ = skip_lines(lines_to_skip);
+                    lines_to_skip += 1;
                     println!("{}", Instruction::get_help_string(Instruction::Add));
-                    
-                    return Err(ErrorCode::InvalidOpcode);
+                    return Err(ErrorCode::InvalidOpcode(line.join(", ")));
                 },
                 ["sub", _rest @ ..] => {
+                    let _ = skip_lines(lines_to_skip);
+                    lines_to_skip += 1;
                     println!("{}", Instruction::get_help_string(Instruction::Sub));
                     
-                    return Err(ErrorCode::InvalidOpcode);
+                    return Err(ErrorCode::InvalidOpcode(line.join(", ")));
                 },
                 // MULL / IMUL
                 [op @ ("mul" | "imul"), parameter] => {
@@ -649,13 +698,15 @@ impl Engine {
                 },
                 [op @ ("mul" | "imul"), _rest @ ..] => {
                     let signed = *op == "imul";
+                    let _ = skip_lines(lines_to_skip);
+                    lines_to_skip += 1;
                     if signed {
                         println!("{}", Instruction::get_help_string(Instruction::Imul));
                     } else {
                         println!("{}", Instruction::get_help_string(Instruction::Mul));
                     }
                     
-                    return Err(ErrorCode::InvalidOpcode);
+                    return Err(ErrorCode::InvalidOpcode(line.join(", ")));
                 },
                 // DIV / IDIV Instructions
                 [op @ ("div" | "idiv"), parameter] => {
@@ -670,15 +721,16 @@ impl Engine {
                 },
                 [op @ ("div" | "idiv"), _rest @ ..] => {
                     let signed = *op == "idiv";
+                    let _ = skip_lines(lines_to_skip);
+                    lines_to_skip += 1;
                     if signed {
                         println!("{}", Instruction::get_help_string(Instruction::Idiv));
                     } else {
                         println!("{}", Instruction::get_help_string(Instruction::Div));
                     }
                     
-                    return Err(ErrorCode::InvalidOpcode);
-                },
-                             
+                    return Err(ErrorCode::InvalidOpcode(line.join(", ")));
+                },                           
                 [op @ ("shr" | "shl"), register, parameter] if self.is_valid_register(register)=> {
                     // Determine size of the operand
                     /*          
@@ -790,7 +842,7 @@ impl Engine {
                     let (memory_value, size_dst) = self.parse_value_from_parameter(trimmed_dst, size_option_dst)?;
                         
 
-                    let destination = self.memory_manager.calculate_effective_address(trimmed_dst, &self.registers, &self.labels, true)?;
+                    let destination = self.memory_manager.calculate_effective_address(trimmed_dst, &self.registers, true)?;
 
                     let is_shr = *op == "shr";
                     // println!("{:?} {}", size_dst, memory_address);
@@ -856,7 +908,8 @@ impl Engine {
                     } else {
                         args.join(" ")
                     };
-
+                    let _ = skip_lines(lines_to_skip);
+                    lines_to_skip += 1;
                     if let Some((start_char, end_char)) = parameter.chars().next().zip(parameter.chars().rev().next()) {
                         if start_char == '\'' && end_char == '\'' {
                             println!("[PRINT]@[IP={ip}]:\t{parameter}\n");    
@@ -884,13 +937,15 @@ impl Engine {
                     let (ch, memory_address) = match args.as_slice() {
                         ["char", address] => (true, *address),
                         [address] => (false, *address),
-                        _ => return Err(ErrorCode::InvalidOpcode)
+                        _ => return Err(ErrorCode::InvalidOpcode(line.join(", ")))
                     };
 
+                    let _ = skip_lines(lines_to_skip);
+                    lines_to_skip += 1;
 
                     let (size_option_src, trimmed_address) = self.get_pointer_argument_size(memory_address);
                     let size = size_option_src.unwrap_or(VariableSize::Byte);
-                    if let Ok(parsed_address) = self.memory_manager.calculate_effective_address(trimmed_address, &self.registers, &self.labels, true) {
+                    if let Ok(parsed_address) = self.memory_manager.calculate_effective_address(trimmed_address, &self.registers, true) {
                         let (value, _) = self.parse_value_from_parameter(*number, None)?;
                         self.memory_manager.check_memory_address(parsed_address+(value as usize)*size.value())?;
                         let ip = self.registers[get_register("IP")].get_word();
@@ -980,16 +1035,17 @@ impl Engine {
                             }
                         }
                     }
-
+                    let _ = skip_lines(lines_to_skip);
+                    lines_to_skip += 1;
                     if let Err(error) = self.memory_manager.save_variable(variable_name.to_string(), &bytes, size) {
-                        
                         return Err(error);
                     }
-
                 },
                 //////// JUMPS ////////////
                 ["jmp", label] => {
                     if let Err(error) = self.jump_to(label) {     
+                        let _ = skip_lines(lines_to_skip);
+                        lines_to_skip += 1;
                         println!("{}", Instruction::get_help_string(Instruction::Jmp));
                         return Err(error);
                     }
@@ -1001,7 +1057,9 @@ impl Engine {
                     if equal != self.is_flag_on(Flag::Zero) {
                         continue;
                     }
-                    if let Err(error) = self.jump_to(label) {     
+                    if let Err(error) = self.jump_to(label) {  
+                        let _ = skip_lines(lines_to_skip);
+                        lines_to_skip += 1;   
                         match *_flag {
                             "je" =>  println!("{}", Instruction::get_help_string(Instruction::Je)),
                             "jz" =>  println!("{}", Instruction::get_help_string(Instruction::Jz)),
@@ -1011,7 +1069,7 @@ impl Engine {
                         }          
                         return Err(error);
                     }
-                }        
+                },     
                 [_flag @ ("jg" | "jge"), label] => {
                     let is_jg = *_flag == "jg";
 
@@ -1023,6 +1081,8 @@ impl Engine {
                     }
             
                     if let Err(error) = self.jump_to(label) {   
+                        let _ = skip_lines(lines_to_skip);
+                        lines_to_skip += 1;
                         match *_flag {
                             "jg" =>  println!("{}", Instruction::get_help_string(Instruction::Jg)),
                             "jge" =>  println!("{}", Instruction::get_help_string(Instruction::Jge)),
@@ -1030,7 +1090,7 @@ impl Engine {
                         }                
                         return Err(error);
                     }
-                }
+                },
                 [_flag @ ("jl" | "jle"), label] => {
                     let is_jl = *_flag == "jl";
 
@@ -1042,7 +1102,9 @@ impl Engine {
                         continue;
                     }
             
-                    if let Err(error) = self.jump_to(label) {    
+                    if let Err(error) = self.jump_to(label) {   
+                        let _ = skip_lines(lines_to_skip);
+                        lines_to_skip += 1; 
                         match *_flag {
                             "jl" =>  println!("{}", Instruction::get_help_string(Instruction::Jl)),
                             "jle" =>  println!("{}", Instruction::get_help_string(Instruction::Jle)),
@@ -1050,7 +1112,7 @@ impl Engine {
                         }   
                         return Err(error);
                     }
-                }
+                },
                 [_flag @ ("ja" | "jae"), label] => {
                     let is_ja = *_flag == "ja";
 
@@ -1058,7 +1120,9 @@ impl Engine {
                         continue;
                     }
             
-                    if let Err(error) = self.jump_to(label) {       
+                    if let Err(error) = self.jump_to(label) {     
+                        let _ = skip_lines(lines_to_skip);
+                        lines_to_skip += 1;  
                         match *_flag {
                             "ja" =>  println!("{}", Instruction::get_help_string(Instruction::Ja)),
                             "jae" =>  println!("{}", Instruction::get_help_string(Instruction::Jae)),
@@ -1066,7 +1130,7 @@ impl Engine {
                         }           
                         return Err(error);
                     }
-                }
+                },
                 [_flag @ ("jb" | "jbe"), label] => {
                     let is_jb = *_flag == "jb";
 
@@ -1074,7 +1138,9 @@ impl Engine {
                         continue;
                     }
 
-                    if let Err(error) = self.jump_to(label) {          
+                    if let Err(error) = self.jump_to(label) {       
+                        let _ = skip_lines(lines_to_skip);
+                        lines_to_skip += 1;   
                         match *_flag {
                             "jb" =>  println!("{}", Instruction::get_help_string(Instruction::Jb)),
                             "jbe" =>  println!("{}", Instruction::get_help_string(Instruction::Jbe)),
@@ -1082,7 +1148,7 @@ impl Engine {
                         }        
                         return Err(error);
                     }
-                }
+                },
                 // CMP
                 ["cmp", first_operand, second_operand] => {
 
@@ -1119,6 +1185,24 @@ impl Engine {
                     self.set_flag(Flag::Sign, result < 0);
                     self.set_flag(Flag::Parity, result.count_ones() % 2 == 0);
                 },
+                ["call", label] => {
+                    let ip: u32 = self.get_register_value("IP")?;
+                    match self.jump_to(label) {
+                        Ok(_) => {
+                            self.memory_manager.push_to_stack(ip, 
+                                                              VariableSize::Word, 
+                                                              &mut self.registers[get_register("ESI")])?;
+                        },
+                        Err(error) => return Err(error),
+                    }
+                },
+                ["ret"] => {
+                    let ip_from_stack = self.memory_manager.pop_from_stack(VariableSize::Word, 
+                                                                                &mut self.registers[get_register("ESI")])?;
+                    // I would use JUMP_TO but it hates me apparently.
+                    self.registers[get_register("IP")].load_word(ip_from_stack as u16);
+                    // self.lines.set_ip(ip_from_stack as usize);	
+                } 
                 // STACK OPERATIONS
                 ["push", parameter] => {
                     // No "WORD PTR" etc.
@@ -1143,7 +1227,7 @@ impl Engine {
                         }
                     } else {
                         // Calculate effective address of destination            
-                        match self.memory_manager.calculate_effective_address(trimmed_parameter, &self.registers, &self.labels, true) {
+                        match self.memory_manager.calculate_effective_address(trimmed_parameter, &self.registers, true) {
                             // Destination is valid address
                             Ok(parsed_address) => {
                                 match size {
@@ -1161,26 +1245,60 @@ impl Engine {
                 [label] if label.ends_with(":") => {
                     let no_colon = &label[..label.len()-1];
                     // Found no label
-                    if self.labels.get(no_colon).is_none(){
-                        return Err(ErrorCode::InvalidOpcode);
+                    if self.memory_manager.labels.get(no_colon).is_none(){
+                        let error_msg = format!("Unknown instruction: {:?}.\nPerhaps you misspelt the label name?", label);
+                        return Err(ErrorCode::InvalidOpcode(error_msg));
                     }
-                }
+                },
+                // SKIP PROCS
+                [proc, arg @ ("PROC"|"END")] => {
+                    let end = *arg == "END";
+
+                    let end_ip = if let Some((_, end_ip)) = self.memory_manager.procs.get(*proc) {
+                        *end_ip
+                    } else {
+                        let error_msg: String = format!("Unknown instruction: {:?}.\nPerhaps you misspelt the proc name?", proc);
+                        return Err(ErrorCode::InvalidOpcode(error_msg));
+                    };
+
+                    if end {
+                        let error_msg: String = format!("Must return in proc.");
+                        return Err(ErrorCode::InvalidOpcode(error_msg));
+                    } else {
+                        let caller_ip = format!("{}", end_ip);
+                        if let Err(error) = self.jump_to(&&caller_ip.as_str()) {
+                            return Err(error);
+                        }
+                    }
+                },
+                
                 // NO MATCH
                 _ => {
-                    println!("Unknown instruction: {:?}", line);
-                    return Err(ErrorCode::InvalidOpcode);
+                    let error_msg = format!("Unknown instruction: {:?}", line);
+                    return Err(ErrorCode::InvalidOpcode(error_msg));
                     // Handle unrecognized instructions
                 }
             }
-            self.lines.set_ip(self.registers[get_register("IP")].get_word() as usize);
+            // Won't panic
+            // If some JUMP was made, this will update the lines module.
+            // If no JUMP was made, this basically does nothing, as it sets lines' ip to itself.
+            self.lines.set_ip(self.get_register_value("IP")? as usize);
+        }
+        for _ in 0..lines_to_skip {
+            println!("");
         }
         Ok(())
     }
 
-    fn jump_to(&mut self, label: &&str) -> Result<(), ErrorCode> {
-        if let Some(address) = self.labels.get(*label) {
-            self.lines.set_ip(*address);
+    fn jump_to(&mut self, label: &&str) -> Result<usize, ErrorCode> {
+        if let Some(address) = self.memory_manager.labels.get(*label) {
+            // self.lines.set_ip(*address);
             self.registers[get_register("IP")].load_word(*address as u16);
+            Ok(*address)
+        } else if let Some((start_ip, _)) = self.memory_manager.procs.get(*label) {
+            // self.lines.set_ip(*start_ip);
+            self.registers[get_register("IP")].load_word(*start_ip as u16);
+            Ok(*start_ip)
         } else {
             let (size_option, trimmed) = self.get_pointer_argument_size(label);
 
@@ -1191,7 +1309,7 @@ impl Engine {
             }
             
             let target =  if self.memory_manager.is_memory_operand(label) {
-                self.memory_manager.calculate_effective_address(label, &self.registers, &self.labels, true)?
+                self.memory_manager.calculate_effective_address(label, &self.registers, true)?
                 
             } else {
                 let (a, _) = self.parse_value_from_parameter(label, size_option)?;
@@ -1205,10 +1323,10 @@ impl Engine {
             }
 
             self.registers[get_register("IP")].load_word(target as u16);
-            self.lines.set_ip(target);
-
+            // self.lines.set_ip(target);
+            Ok(target)
         }
-        Ok(())
+
     }
 
     fn is_flag_on(&self, flag: Flag) -> bool {
@@ -1554,15 +1672,22 @@ impl Engine {
 
 impl fmt::Display for Engine {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        for i in 0..self.registers.clone().into_iter().len() {
+        let length = self.registers.clone().into_iter().len();
+        for i in 0..length {
             let register: &Register = &self.registers[i];
             let low_byte = (register.get_word() & 0xFF) as u8;
             let high_byte = ((register.get_word() >> 8) & 0xFF) as u8;
             let reg_string = format!("Register {}:\t{}\t({:08b} {:08b})", register.name, register.get_word(), high_byte, low_byte);
             write!(f, "{reg_string}  ")?;
             
-            let this_line = self.memory_manager._get_memory(i*24, 24);
-            write!(f, "{: <4}:", i*24)?;
+            let start_index = if i > 6 {
+                MEMORY_SIZE - ((length-i) * 24)
+            } else {
+                i * 24
+            };
+
+            let this_line = self.memory_manager._get_memory(start_index, 24);
+            write!(f, "{: <6}:", start_index)?;
             for j in 0..6 {
                 write!(f, "{:02X} ", this_line[j*4])?;
                 write!(f, "{:02X} ", this_line[j*4+1])?;

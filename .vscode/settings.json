@@ -3,6 +3,7 @@
         "Idiv",
         "imul",
         "iprint",
-        "LSHIFT"
+        "LSHIFT",
+        "procs"
     ]
 }
