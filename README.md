@@ -6,7 +6,7 @@ This project is an 8086 TASM (Turbo Assembler) simulator that supports 32-bit re
 
 - **32-bit Registers**: EAX, EBX, ECX, EDX, ESI, EDI
 - **16-bit, 8-bit Registers**: AX (AL/AH), BX (BH/BL), etc.
-- **Stack Operations**: `push` and `pop` commands. (Not yet implemented)
+- **Stack Operations**: `push` and `pop` commands
 - **Arithmetic Operations**: Addition, subtraction, multiplication, and division.
 - **Conditional and Unconditional Jumps**: For flow control.
 
