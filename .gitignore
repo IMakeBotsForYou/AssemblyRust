@@ -5,4 +5,4 @@ a.py
 /src/compiler.rs
 /src/main.exe
 /scc/main.pdb
-/.vscode/*
+/.vscode
