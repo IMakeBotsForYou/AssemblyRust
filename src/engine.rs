@@ -1431,10 +1431,16 @@ impl Engine {
         let index = dest.to_index();
         let size = match get_register_size(dest) {
             VariableSize::Byte => {
+                if constant > u8::MAX.into() {
+                    return Err(ErrorCode::InvalidValue(format!("Value {constant} cannot fit into {:?}", dest)));
+                }
                 self.registers[index].load_byte(constant as u8, dest.is_top());
                 VariableSize::Byte
             },
             VariableSize::Word => {
+                if constant > u16::MAX.into() {
+                    return Err(ErrorCode::InvalidValue(format!("Value {constant} cannot fit into {:?}", dest)));
+                }
                 self.registers[index].load_word(constant as u16);
                 VariableSize::Word
             },
@@ -1635,10 +1641,11 @@ impl Engine {
         self.set_flag(Flag::Overflow, overflow_condition);
         self.set_register_value(&RegisterName::AX, result as u32)?;
         Ok(())
+
     }
     
     // Function to multiply 16-bit values and store the result in DX:AX register.
-    fn mul_16bit(&mut self, src_value: u16, signed: bool) -> Result<(), ErrorCode> {
+    fn mul_16bit(&mut self, src_value: u16, signed: bool) -> Result<(), ErrorCode>  {
         let ax_value = self.get_register_value(&RegisterName::AX);
     
         let result = if signed {
