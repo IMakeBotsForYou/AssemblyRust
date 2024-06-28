@@ -4,12 +4,9 @@ use crate::{
         VariableMetadata,
         VariableSize,
     }, 
-    register::{
-        get_register, 
-        Register,
-        get_register_size
-    }, 
-    utils::parse_string_to_usize};
+    register::{RegisterName, Register, get_register_size},
+    utils::parse_string_to_usize
+};
 
 use std::collections::HashMap;
 use regex::Regex;
@@ -210,127 +207,94 @@ impl MemoryManager {
         operand.starts_with('[') && operand.ends_with(']')
     }
 
-    pub fn get_register_value(&self, registers: &[Register; 10], name: &str) -> Option<u32> {
-
-        if get_register_size(name).is_none() {
-            return None;
-        }
-
-        let value = registers[get_register(name)].get_dword();
-
-        match name {
-            "AL"   | "BL"   | "CL"  | "DL" => Some(value & 0x000000FF),
-            "AH"   | "BH"   | "CH"  | "DH" => Some(value & 0x0000FF00),
-            "AX"   | "BX"   | "CX"  | "DX"  | "SI"  | "DI"  | "IP" | "FLAG" => Some(value & 0x0000FFFF),
-            "EAX"  | "EBX"  | "ECX" | "EDX" | "ESI" | "EDI" => Some(value),
-            _ => None,
-        }
-    }
-    /* 
+    /*
     Effective Address calculation follows this format:
-
-    Effective Address=Base+(Index*Scale)+Displacement
-
-     */
+    Effective Address = Base + (Index * Scale) + Displacement
+    */
     pub fn calculate_effective_address(&self, mem_operand: &str, registers: &[Register; 10], label_vars: bool) -> Result<usize, ErrorCode> {
         // Ensure the memory operand is valid and remove the square brackets
         if !self.is_memory_operand(mem_operand) {
             return Err(ErrorCode::InvalidPointer("Memory Operand must be enveloped in []".to_string()));
         }
         let addr_expression = &mem_operand[1..mem_operand.len() - 1];
-    
+
         let mut effective_address = 0;
 
         // Split the address expression into parts and process each part
         for part in addr_expression.split(|c| c == '+' || c == '-') {
             let part = part.trim();
-            //allow spaces                                                                          don't underflow
+
+            // Determine if the part is negative based on the context
             let is_negative = addr_expression.chars().nth(addr_expression.find(part).unwrap().saturating_sub(1)) == Some('-');
-            
+
             // Process parts containing multiplication (index * scale)
             if part.contains('*') {
-
                 let mut components = part.split('*').map(|s| s.trim());
                 let index_part = components.next().ok_or(ErrorCode::InvalidPointer("Invalid Addressing Mode.".to_string()))?;
                 let scale_part = components.next().ok_or(ErrorCode::InvalidPointer("Invalid Addressing Mode.".to_string()))?;
-    
+
                 // Get the index value from registers or as a direct value
-                let index_value = if let Some(v) = self.get_register_value(registers, index_part) {
-                    v as usize
+                let index_value = if let Ok(register_name) = RegisterName::from_str(index_part) {
+                    get_register_value(registers, &register_name) as usize
                 } else {
                     parse_string_to_usize(index_part).ok_or(ErrorCode::InvalidRegister(index_part.to_string()))? as usize
                 };
-    
+
                 // Parse the scale value
                 let scale_value = parse_string_to_usize(scale_part).ok_or(
-                    ErrorCode::InvalidValue(
-                        format!("Invalid scale factor: {scale_part}")
-                    ))?;
-    
+                    ErrorCode::InvalidValue(format!("Invalid scale factor: {}", scale_part))
+                )? as usize;
+
                 // Adjust the effective address based on the scale and sign
                 effective_address += if is_negative {
-                    - ((index_value * (scale_value as usize)) as isize)
+                    -((index_value * scale_value) as isize)
                 } else {
-                    (index_value * (scale_value as usize)) as isize
+                    (index_value * scale_value) as isize
                 };
-    
+
             // Handle displacement, hexadecimal values, or variable names
             } else if let Some(value) = self.parse_value(part, is_negative, registers, label_vars) {
                 effective_address += value;
+
             } else {
                 return Err(ErrorCode::InvalidRegister(part.to_string()));
             }
         }
-    
-        // // Ensure the effective address is positive and cast to usize
-        // if effective_address < 0 {
-        //     return Err(ErrorCode::InvalidPointer("Pointer address cannot be less than 0.".to_string()));
-        // }
-    
+
         Ok(effective_address as usize)
     }
     
     pub fn parse_value(&self, part: &str, is_negative: bool, registers: &[Register; 10], label_vars: bool) -> Option<isize> {
-    
+        // Parse the part as a usize if possible
         if let Some(value) = parse_string_to_usize(part) {
-            if is_negative {
-                Some(-(value as isize))
-            } else {
-                Some(value as isize)
-            }
-
+            Some(if is_negative { -(value as isize) } else { value as isize })
+    
+        // Handle variable pointers based on label_vars flag
         } else if let Some(var_metadata) = self.variable_pointers.get(part) {
-            // Handle variable name as a pointer and adjust the effective address based on the sign
             if label_vars {
-                let start_index = var_metadata.start_index as isize;
-                if is_negative {
-                    Some(-(start_index as isize))
-                } else {
-                    Some(start_index as isize)
-                }
+                Some(if is_negative { -(var_metadata.start_index as isize) } else { var_metadata.start_index as isize })
             } else {
-                let value: u16;
-                if var_metadata.length == 1 {
-                    value = self.memory[var_metadata.start_index] as u16;
-                } else {
-                    value = (self.memory[var_metadata.start_index] as u16) << 8 | self.memory[var_metadata.start_index+1] as u16;
-                }
-                Some(value as isize)
+                let value = match var_metadata.length {
+                    1 => self.memory[var_metadata.start_index] as u16,
+                    2 => (self.memory[var_metadata.start_index] as u16) << 8 | self.memory[var_metadata.start_index + 1] as u16,
+                    _ => return None, // Handle unsupported lengths
+                };
+                Some(if is_negative { -(value as isize) } else { value as isize })
             }
-
-        // Handle base register and adjust the effective address based on the sign
-        } else if let Some(v) = self.get_register_value(registers, part) {
-            if is_negative {
-                Some(-(v as isize))
-            } else {
-                Some(v as isize)
-            }
+    
+        // Handle register values based on is_negative flag
+        } else if let Ok(register_name) = RegisterName::from_str(part) {
+            Some(if is_negative { -(get_register_value(registers, &register_name) as isize) } else { get_register_value(registers, &register_name) as isize })
+    
+        // Handle labels directly
         } else if let Some(v) = self.labels.get(part) {
-                return Some(*v as isize);
+            Some(*v as isize)
+    
         } else {
             None
         }
     }
+    
 
     pub fn set_byte(&mut self, index: usize, value: u8) -> Result<(), ErrorCode> {
         self.check_memory_address(index)?;
@@ -389,5 +353,19 @@ impl MemoryManager {
     }
     pub fn _get_memory(&self, start_index: usize, amount: usize) -> Vec<u8> {
         self.memory[start_index..amount+start_index].to_vec()
+    }
+}
+
+
+pub fn get_register_value(registers: &[Register; 10], reg_name: &RegisterName) -> u32 {
+    
+    let reg = &registers[reg_name.to_index()];
+    let value = reg.get_dword();
+
+    match get_register_size(reg_name) {
+        VariableSize::Byte if !reg_name.is_top() => value & 0x000000FF,
+        VariableSize::Byte => value & 0x0000FF00,
+        VariableSize::Word => value & 0x0000FFFF,
+        VariableSize::DoubleWord => value,
     }
 }

@@ -1,13 +1,9 @@
-use std::{
-    io::{
+use std::io::{
         self,
         stdin,
         Write,
-    },
-    collections::HashSet,
-    fmt,
-};
-
+    };
+use std::fmt;
 use crate::{
     error_code::ErrorCode,
     flag::Flag,
@@ -18,9 +14,9 @@ use crate::{
     line_processor::LineProcessor,
     memory_manager::MemoryManager,
     register::{
-        get_register, 
         Register,
-        get_register_size
+        get_register_size,
+        RegisterName,
     },
     // status::Status,
     utils::{
@@ -115,14 +111,13 @@ fn combine_parts(vec: &Vec<String>) -> Vec<String> {
 
     result
 }
-
+#[allow(unused_assignments)]
 pub struct Engine {
-    lines: LineProcessor, // lines of source code (.txt)
+    pub lines: LineProcessor, // lines of source code (.txt)
     pub registers: [Register; 10], // A-D, ESI, EDI, P
     memory_manager: MemoryManager, // 16 KB bytes of memory
     // mode: bool, // false = reading data, true = reading code
     // status: Status, // status: ok, error, halted,
-    valid_registers: HashSet<String>,
     // interrupts: Vec<Interrupt>
 }
 
@@ -131,60 +126,51 @@ impl Engine {
     pub fn new(file_name: &str) -> io::Result<Self> {
         let file_lines = read_lines_from_file(file_name)?;
         let my_registers: [Register; 10] = [
-            Register::new("EAX"),
-            Register::new("EBX"),
-            Register::new("ECX"),
-            Register::new("EDX"),
-            Register::new("ESI"),
-            Register::new("EDI"),
-            Register::new("BP"),
-            Register::new("SP"),
-            Register::new("IP"),
-            Register::new("FLAG"),
+            Register::new(RegisterName::EAX),
+            Register::new(RegisterName::EBX),
+            Register::new(RegisterName::ECX),
+            Register::new(RegisterName::EDX),
+            Register::new(RegisterName::ESI),
+            Register::new(RegisterName::EDI),
+            Register::new(RegisterName::BP),
+            Register::new(RegisterName::SP),
+            Register::new(RegisterName::IP),
+            Register::new(RegisterName::FLAG),
         ];
 
         let ds = 0 as usize;         // DATA SEGMENT starts at 0
         let cs = 1024 * 3 as usize;  // CODE SEGMENT starts at 3072 
         let ss: usize = MEMORY_SIZE - 1024; // STACK SEGMENT, starts at 15360 (1024*15)
-
-        let valid_registers: HashSet<String> = [         
-            "AX", "BX", "CX", "DX", "SI", "DI", "IP", "FLAG", "BP", "SP",
-            "AL", "AH", "BL", "BH", "CL", "CH", "DL", "DH",
-            "EAX", "EBX", "ECX", "EDX", "ESI", "EDI",  "EBP", "ESP"
-        ].iter().cloned().map(String::from).collect();
-            Ok(Self {
-                lines: LineProcessor::new(file_lines),
-                registers: my_registers,
-                memory_manager: MemoryManager::new(MEMORY_SIZE, [ds, cs, ss]),
-                valid_registers,
-            })
-    }
-
-    fn is_valid_register(&self, reg_to_check: &str) -> bool {
-        self.valid_registers.contains(reg_to_check)
+        Ok(Self {
+            lines: LineProcessor::new(file_lines),
+            registers: my_registers,
+            memory_manager: MemoryManager::new(MEMORY_SIZE, [ds, cs, ss]),
+        })
     }
     // Only used for tests
     pub fn get_memory(&self, amount: usize) -> Vec<u8> {
         self.memory_manager._get_memory(0, amount)
     }
 
-    pub fn get_register_value(&self, name: &str) -> Result<u32, ErrorCode> {
-        if !self.is_valid_register(name) {
-            return Err(ErrorCode::InvalidRegister(name.to_string()));
-        }
-        let value = self.registers[get_register(name)].get_dword();
-        match name {
-            "AL"   | "BL"  | "CL" | "DL" => Ok(value & 0x000000FF),
-            "AH"   | "BH"  | "CH" | "DH" => Ok((value & 0x0000FF00) >> 8),
-            "FLAG" | "AX"  | "BX" | "CX"  | "DX" | "SI" | "DI" | "SP"  => Ok(value & 0x0000FFFF), 
-            "ESI"  | "EDI" | "IP" | "EAX" | "EBX" | "ECX" | "EDX"  => Ok(value), 
-            _ => Err(ErrorCode::InvalidRegister(name.to_string()))
+    pub fn get_register_value(&self, reg_name: &RegisterName) -> u32 {
+        let reg = &self.registers[reg_name.to_index()];
+        let value = reg.get_dword();
+        match get_register_size(reg_name) {
+            VariableSize::Byte => {
+                if reg_name.is_top() {
+                    (value & 0x0000FF00) >> 8
+                } else {
+                    value & 0x000000FF
+                }
+            },
+            VariableSize::Word => value & 0x0000FFFF,
+            VariableSize::DoubleWord => value,
         }
     }
     
     fn set_flags(&mut self, result: usize, size: VariableSize, overflowed: bool) {
 
-        self.set_register_value("FLAG", 0).expect("Flag Register Missing?!");
+        let _ = self.set_register_value(&RegisterName::FLAG, 0);
 
         if result.count_ones() % 2 == 0 {
             self.set_flag(Flag::Parity, true);
@@ -206,12 +192,11 @@ impl Engine {
         if overflowed {
             self.set_flag(Flag::Overflow, true);    
         }
-        
     }
 
 
-
-    fn get_pointer_argument_size<'a>(&self, argument: &'a str) -> (Option<VariableSize>, &'a str) {
+    // Also trims the parameter if it's a pointer (removes BYTE/WORD/DWORD PTR)
+    fn get_argument_size<'a>(&self, argument: &'a str) -> (Option<VariableSize>, &'a str) {
         let parts: Vec<&str> = argument.split_whitespace().collect();
         match parts.as_slice() {
             ["BYTE", "PTR", arg] => (Some(VariableSize::Byte), *arg),
@@ -228,84 +213,99 @@ impl Engine {
         }
     }
 
-    pub fn parse_value_from_parameter(&self, parameter: &str, mut size: Option<VariableSize>) -> Result<(u32, VariableSize), ErrorCode> {
-        if let Some(value) = parse_string_to_usize(parameter){
-            // Constant
+    pub fn parse_value_from_parameter(
+        &self, 
+        parameter: &str, 
+        mut size: Option<VariableSize>
+    ) -> Result<(u32, VariableSize), ErrorCode> {
+        if let Some(value) = parse_string_to_usize(parameter) {
+            // Handle constant values
             let vi32 = value as i32;
-            let assumed_size = if vi32 >= i8::MIN.into() || vi32 <= u8::MAX.into() {
+            let assumed_size = if vi32 >= i8::MIN.into() && vi32 <= u8::MAX.into() {
                 VariableSize::Byte
-            } else if vi32 >= i16::MIN.into() || vi32 <= u16::MAX.into() {
+            } else if vi32 >= i16::MIN.into() && vi32 <= u16::MAX.into() {
                 VariableSize::Word
-            } else if vi32 >= i32::MIN.into() || value <= u32::MAX {
+            } else if vi32 >= i32::MIN.into() && value <= u32::MAX {
                 VariableSize::DoubleWord
             } else {
-                return Err(ErrorCode::InvalidValue(format!("value {} is outside of allowed range. 0-u32::MAX", value)));
+                return Err(ErrorCode::InvalidValue(format!(
+                    "Value {} is outside of allowed range. 0-u32::MAX",
+                    value
+                )));
             };
-
-            Ok((value as u32, assumed_size))
-
-        } else if let Ok(value) = self.get_register_value(parameter) {
-            // Register
-            let assumed_size = match parameter {
-                "AL"|"AH"|"BL"|"BH"|"CL"|"CH"|"DL"|"DH" => {
-                    VariableSize::Byte
-                },
-                "EAX"|"EBX"|"ECX"|"EDX"|"ESI"|"EDI" => {
-                    VariableSize::DoubleWord
-                },
-                "AX"|"BX"|"CX"|"DX"|"SI"|"DI"|"FLAG"|"IP"|"SP"  => {
-                    VariableSize::Word
-                },
-                _ => return Err(ErrorCode::InvalidRegister(parameter.to_string())) // Unreachable
-            };
-            Ok((value, assumed_size))
-        } else if let Ok(parsed_address) = self.memory_manager.calculate_effective_address(parameter, &self.registers,  true) {
-   
-            // Memory (adjust size to pointer size)
+            return Ok((value as u32, assumed_size));
+        }
+    
+        if let Ok(reg_name) = RegisterName::from_str(parameter) {
+            // Handle register values
+            let assumed_size = get_register_size(&reg_name);
+            let value = self.get_register_value(&reg_name);
+            return Ok((value, assumed_size));
+        }
+    
+        if let Ok(parsed_address) = self.memory_manager.calculate_effective_address(
+            parameter, 
+            &self.registers, 
+            true
+        ) {
+            // Handle memory addresses
             let memory_address_str = parameter.to_string();
             if memory_address_str.len() < 3 {
-                return Err(ErrorCode::InvalidPointer("Pointer length must be more than 3 including []".to_string()));
+                return Err(ErrorCode::InvalidPointer(
+                    "Pointer length must be more than 3 including []".to_string()
+                ));
             }
+            // No assumed size. If the parameter is a variable [var], then get var's size at declaration
+            // Example: var dw 5
+            // mov eax, [var] ; [var] is assumed as a word pointer
+
             if size.is_none() {
-                if let Some(metadata) = self.memory_manager.get_variable(&memory_address_str[1..memory_address_str.len()-1]) {
+                if let Some(metadata) = self.memory_manager.get_variable(&memory_address_str[1..memory_address_str.len() - 1]) {
                     size = Some(metadata.size);
-                } else if let Some(_) = self.memory_manager.labels.get(&memory_address_str[1..memory_address_str.len()-1]) {
+                } else if self.memory_manager.labels.contains_key(&memory_address_str[1..memory_address_str.len() - 1]) {
                     size = Some(VariableSize::Word);
                 }
-                
             }
-
-            match size {
-                Some(VariableSize::Byte)|None => {
+            // If we still have no assumed size, the pointer defaults to a byte pointer.
+            match size.unwrap_or(VariableSize::Byte) {
+                VariableSize::Byte => {
                     let a = self.memory_manager.get_byte(parsed_address)?;
                     Ok((a as u32, VariableSize::Byte))
                 },
-                Some(VariableSize::Word) => {
+                VariableSize::Word => {
                     let a = self.memory_manager.get_word(parsed_address)?;
                     Ok((a as u32, VariableSize::Word))
                 },
-                Some(VariableSize::DoubleWord) => {
+                VariableSize::DoubleWord => {
                     let a = self.memory_manager.get_dword(parsed_address)?;
                     Ok((a as u32, VariableSize::DoubleWord))
                 },
             }
         } else {
-            Err(ErrorCode::InvalidValue(format!("Parameter {parameter} could not be parsed.")))
+            Err(ErrorCode::InvalidValue(format!(
+                "Parameter {} could not be parsed.",
+                parameter
+            )))
         }
     }
-
+    pub fn is_valid_register(name: &str) -> bool {
+        match RegisterName::from_str(name) {
+            Ok(_) => true,
+            Err(_) => false
+        }
+    }
     pub fn execute(&mut self, debug: bool) -> Result<(), ErrorCode>{
         // Go over code to get all the labels.
         let mut in_proc = false;
         let mut current_proc_start_ip: usize = 0;
         let mut current_proc_name = String::new();
         let mut lines_to_skip = 1;
+        let ip_index = RegisterName::IP.to_index();
         loop {
             let line_option = self.lines.next();
             if line_option.is_none() {
                 break;
             }
-
             if let Some(line) = line_option {
                 let proc_string = "PROC".to_string();
                 let end_proc_string = "END".to_string();
@@ -315,7 +315,7 @@ impl Engine {
                         if self.memory_manager.labels.get(&no_colon).is_some() {
                             return Err(ErrorCode::LabelAlreadyExists(format!("Label {no_colon} already exists")));
                         }
-                        if let Err(error) = self.memory_manager.save_label(no_colon, self.get_register_value("IP")? as usize) {
+                        if let Err(error) = self.memory_manager.save_label(no_colon, self.get_register_value(&RegisterName::IP) as usize) {
                             return Err(error);
                         }
                     },
@@ -328,7 +328,7 @@ impl Engine {
                         }
                         in_proc = true;
                         current_proc_name = proc_name.clone();
-                        current_proc_start_ip = self.get_register_value("IP")? as usize;
+                        current_proc_start_ip = self.get_register_value(&RegisterName::IP) as usize;
                     }
 
                     [proc_name, proc] if proc == &end_proc_string => {
@@ -339,23 +339,25 @@ impl Engine {
                             return Err(ErrorCode::InvalidOpcode(format!("Cannot end proc outside of a proc.")));
                         }
                         in_proc = false;
-                        let current_proc_end_ip = self.get_register_value("IP")? as usize;
+                        let current_proc_end_ip = self.get_register_value(&RegisterName::IP) as usize;
                         self.memory_manager.procs.insert(current_proc_name.clone(), (current_proc_start_ip+1, current_proc_end_ip+1));
                     }
                     _ => {}
                 }
             }
-            self.lines.update_ip_register(&mut self.registers[get_register("IP")]);
+            self.lines.update_ip_register(&mut self.registers[ip_index]);
         }
         
         self.lines.set_ip(0);
-        self.lines.update_ip_register(&mut self.registers[get_register("IP")]);
+        self.lines.update_ip_register(&mut self.registers[ip_index]);
         let mut buffer: Option<(usize, String)> = None;
-        let _ = clear_screen(100);
+        if debug {
+            let _ = clear_screen(100);
+        }
         loop {
             let line_option = self.lines.next();
-            self.lines.update_ip_register(&mut self.registers[get_register("IP")]);
-            let ip: usize = self.get_register_value("IP")? as usize;
+            self.lines.update_ip_register(&mut self.registers[ip_index]);
+            let ip: usize = self.get_register_value(&RegisterName::IP) as usize;
 
             if line_option.is_none() {
                 break;
@@ -387,15 +389,15 @@ impl Engine {
             let line_str: Vec<&str> = combining_inside_quotes.iter().map(|s| &**s).collect();
             match line_str.as_slice() {
                 // INC DEC 
-                [op @ ("inc" | "dec"), register] if self.is_valid_register(register) => {
+                [op @ ("inc" | "dec"), register] if RegisterName::is_valid_name(register) => {
+                    let register = &RegisterName::from_str(register).unwrap();
                     let inc = *op == "inc";
-                    let (result, overflowed) = match get_register_size(register).unwrap() {
+                    let (result, overflowed) = match get_register_size(register) {
                         VariableSize::Byte => {
                             let (value, overflowing) = if inc {
-                                (self.get_register_value(register)? as u8).overflowing_add(1)
-
+                                (self.get_register_value(register) as u8).overflowing_add(1)
                             } else {
-                                (self.get_register_value(register)? as u8).overflowing_sub(1)
+                                (self.get_register_value(register) as u8).overflowing_sub(1)
                             };
 
                             self.set_register_value(register, value as u32)?;
@@ -403,10 +405,10 @@ impl Engine {
                         },
                         VariableSize::Word => {
                             let (value, overflowing) = if inc {
-                                (self.get_register_value(register)? as u16).overflowing_add(1)
+                                (self.get_register_value(register) as u16).overflowing_add(1)
 
                             } else {
-                                (self.get_register_value(register)? as u16).overflowing_sub(1)
+                                (self.get_register_value(register) as u16).overflowing_sub(1)
                             };
 
                             self.set_register_value(register, value as u32)?;
@@ -414,22 +416,22 @@ impl Engine {
                         },
                         VariableSize::DoubleWord => {
                             let (value, overflowing) = if inc {
-                                (self.get_register_value(register)? as u32).overflowing_add(1)
+                                (self.get_register_value(register) as u32).overflowing_add(1)
 
                             } else {
-                                (self.get_register_value(register)? as u32).overflowing_sub(1)
+                                (self.get_register_value(register) as u32).overflowing_sub(1)
                             };
 
                             self.set_register_value(register, value)?;
                             (value, overflowing)
                         },
-                    };
-                self.set_flags(result as usize, get_register_size(register).unwrap(), overflowed)
+                };
+                self.set_flags(result as usize, get_register_size(register), overflowed);
                 },
                 [op @ ("inc" | "dec"), memory_address] if self.memory_manager.is_memory_operand(memory_address) => {
                                     // Case with WORD/BYTE PTR
 
-                    let (size_option, memory_address_str) = self.get_pointer_argument_size(memory_address);
+                    let (size_option, memory_address_str) = self.get_argument_size(memory_address);
                     let inc = *op == "inc";
                     let size = size_option.unwrap_or(VariableSize::Byte);
                     // Calculate effective address
@@ -477,33 +479,35 @@ impl Engine {
                     }
                 },
                 ["inc", _rest @ ..] => {
-                    let _ = skip_lines(lines_to_skip);
-                    lines_to_skip += 1;
+                    if debug {
+                        lines_to_skip += 1;
+                        let _ = skip_lines(lines_to_skip);
+                    }
                     println!("{}", Instruction::get_help_string(Instruction::Inc));
                     return Err(ErrorCode::InvalidOpcode(line.join(", ")));
                 },
                 ["dec", _rest @ ..] => {
-                    let _ = skip_lines(lines_to_skip);
-                    lines_to_skip += 1;
+                    if debug {
+                        lines_to_skip += 1;
+                        let _ = skip_lines(lines_to_skip);
+                    }
                     println!("{}", Instruction::get_help_string(Instruction::Dec));
                     return Err(ErrorCode::InvalidOpcode(line.join(", ")));
                 },
                 // LEA
-                ["lea", reg, memory_address] if self.is_valid_register(*reg) && self.memory_manager.is_memory_operand(memory_address) => {
+                ["lea", register, memory_address] if RegisterName::is_valid_name(*register) && self.memory_manager.is_memory_operand(memory_address) => {
+                    let register = &RegisterName::from_str(register).unwrap();
                     match self.memory_manager.calculate_effective_address(memory_address, &self.registers, true) {
                         Ok(parsed_address) => {
                             // Determine the register size
-                            match get_register_size(*reg) {
-                                Some(VariableSize::Byte) => {
+                            match get_register_size(register) {
+                                VariableSize::Byte => {
                                     return Err(ErrorCode::NotEnoughSpace(
-                                        format!("Cannot store pointer in 1-byte register: {reg}."))
+                                        format!("Cannot store pointer in 1-byte register: {:?}.", register))
                                     );
                                 },
-                                Some(VariableSize::Word)|Some(VariableSize::DoubleWord) => {
-                                    self.mov_reg_const(reg, parsed_address as u32)?;
-                                },
-                                _ => {
-                                    return Err(ErrorCode::InvalidRegister(reg.to_string()));
+                                VariableSize::Word|VariableSize::DoubleWord => {
+                                    self.mov_reg_const(register, parsed_address as u32)?;
                                 },
                             }
                         },
@@ -511,32 +515,35 @@ impl Engine {
                     }
                 },
                 ["lea", _rest @ ..] => {
-                    let _ = skip_lines(lines_to_skip);
-                    lines_to_skip += 1;
+                    if debug {
+                        lines_to_skip += 1;
+                        let _ = skip_lines(lines_to_skip);
+                    }
                     println!("{}", Instruction::get_help_string(Instruction::Lea));
                     return Err(ErrorCode::InvalidOpcode(line.join(", ")));
                 },
                 // MOV Instructions
                 // OP    REG      MEM/REG/CONST
-                ["mov", reg, parameter] if self.is_valid_register(*reg) => {
-                    let (size_option, memory_address) = self.get_pointer_argument_size(parameter);
+                ["mov", reg, parameter] if RegisterName::is_valid_name(reg) => {
+                    let register = &RegisterName::from_str(reg).unwrap();
+                    let (size_option, memory_address) = self.get_argument_size(parameter);
                     let (constant, assumed_size) = self.parse_value_from_parameter(memory_address, size_option)?;
 
                     let is_immediate: bool = parse_string_to_usize(parameter).is_some();
 
-                    if let Some(reg_size) = get_register_size(reg) {
-                        let assumed_size_v = assumed_size.value();
-                        let reg_size_v = reg_size.value();
-                        let invalid = if is_immediate {
-                            assumed_size_v > reg_size_v
-                        } else {
-                            assumed_size_v != reg_size_v
-                        };
-                        if invalid {
-                            return Err(ErrorCode::InvalidValue(format!("Source {parameter} of size ({assumed_size_v}) bytes bytes and destination {reg} of size ({reg_size_v}) bytes are not compatible")));
-                        }
+                    let reg_size = get_register_size(register);
+
+                    let assumed_size_v = assumed_size.value();
+                    let reg_size_v = reg_size.value();
+                    let invalid = if is_immediate {
+                        assumed_size_v > reg_size_v
+                    } else {
+                        assumed_size_v != reg_size_v
+                    };
+                    if invalid {
+                        return Err(ErrorCode::InvalidValue(format!("Source {parameter} of size ({assumed_size_v}) bytes bytes and destination {reg} of size ({reg_size_v}) bytes are not compatible")));
                     }
-                    self.mov_reg_const(reg, constant)?;
+                    self.mov_reg_const(register, constant)?;
 
                 },
                 // OP       MEM               REG/CONST
@@ -545,9 +552,9 @@ impl Engine {
                     if self.memory_manager.is_memory_operand(parameter) {
                         return Err(ErrorCode::InvalidValue(format!("Direct memory transfer is not supported.")));
                     }
-                    let (size_option_src, _) = self.get_pointer_argument_size(parameter);
+                    let (size_option_src, _) = self.get_argument_size(parameter);
 
-                    let (size_option_dst, sliced_memory_string) = self.get_pointer_argument_size(memory_address);
+                    let (size_option_dst, sliced_memory_string) = self.get_argument_size(memory_address);
                     
                     let is_immediate = parse_string_to_usize(parameter).is_some();
                     if let Some(size_dst) = size_option_dst {
@@ -588,34 +595,53 @@ impl Engine {
                 },  
                 // HELP COMMAND
                 ["mov", _rest @ ..] => {
-                    let _ = skip_lines(lines_to_skip);
-                    lines_to_skip += 1;
+                    if debug {
+                        lines_to_skip += 1;
+                        let _ = skip_lines(lines_to_skip);
+                    }
                     println!("{}", Instruction::get_help_string(Instruction::Mov));
                     return Err(ErrorCode::InvalidOpcode(line.join(", ")));
                 },
                 // ADD/SUB Instructions
                 //         OP              REG          MEM/REG/CONST
-                [op @ ("add"|"sub"), reg, parameter] if self.is_valid_register(reg) => {
+                [op @ ("add" | "sub"), register, parameter] if RegisterName::is_valid_name(register) => {
+                    // Parse the register name
+                    let register = &RegisterName::from_str(register).unwrap();
+                    
+                    // Determine if the operation is addition or subtraction
                     let is_addition = *op == "add";
+                    // Check if the parameter is an immediate value
                     let is_immediate = parse_string_to_usize(parameter).is_some();
-                                                                // No "WORD PTR" etc.
-                    let (size_option, trimmed_parameter) = self.get_pointer_argument_size(parameter);
-    
+                    
+                    // Get the argument size and trimmed parameter
+                    let (size_option, trimmed_parameter) = self.get_argument_size(parameter);
+
+                    // Parse the value from the parameter and get its size
                     let (constant, assumed_size) = self.parse_value_from_parameter(trimmed_parameter, size_option)?;
 
-                    if let Some(reg_size) = get_register_size(reg) {
-                        let assumed_size_v = assumed_size.value();
-                        let reg_size_v = reg_size.value();
-                        let invalid = if is_immediate {
-                            assumed_size_v > reg_size_v
-                        } else {
-                            assumed_size_v != reg_size_v
-                        };
-                        if invalid {
-                            return Err(ErrorCode::InvalidValue(format!("Source {parameter} of size ({assumed_size_v}) bytes bytes and destination {reg} of size ({reg_size_v}) bytes are not compatible")));
-                        }
+                    // Get the size of the register
+                    let reg_size = get_register_size(register);
+
+                    // Convert sizes to their numerical values for comparison
+                    let assumed_size_v = assumed_size.value();
+                    let reg_size_v = reg_size.value();
+                    
+                    // Check for size compatibility between the source and destination
+                    let invalid = if is_immediate {
+                        assumed_size_v > reg_size_v
+                    } else {
+                        assumed_size_v != reg_size_v
+                    };
+                    
+                    // Return an error if sizes are incompatible
+                    if invalid {
+                        return Err(ErrorCode::InvalidValue(format!(
+                            "Source {} of size ({}) bytes and destination {:?} of size ({}) bytes are not compatible",
+                            parameter, assumed_size_v, register, reg_size_v)));
                     }
-                    self.add_or_sub_reg_const(reg, constant, is_addition)?;
+                    
+                    // Perform the add or sub operation
+                    self.add_or_sub_reg_const(register, constant, is_addition)?;
                 },
                 //         OP               MEM          REG/CONST
                 [op @ ("add"|"sub"), memory_address, parameter] => {
@@ -625,70 +651,75 @@ impl Engine {
                     if self.memory_manager.is_memory_operand(parameter) {
                         return Err(ErrorCode::InvalidValue(format!("Direct memory transfer is not supported.")));
                     }
-                    
-                    let (size_option_src, _) = self.get_pointer_argument_size(parameter);
-                    let (size_option_dest, memory_address_str_dest) = self.get_pointer_argument_size(memory_address);
+                    // Throwing away the second value because we don't need to trim it.
+                    // The second parameter cannot be a memory operand anyway.
+                    let (size_option_src, _) = self.get_argument_size(parameter);
+                    let (size_option_dest, memory_address_str_dest) = self.get_argument_size(memory_address);
 
-                    if size_option_src.is_some() && size_option_dest.is_some() {
-                        let a = size_option_src.unwrap().value();
-                        let b = size_option_dest.unwrap().value();
+                    // Validate size compatibility if both source and destination sizes are specified
+                    if let (Some(src_size), Some(dest_size)) = (size_option_src, size_option_dest) {
+                        let src_size_val = src_size.value();
+                        let dest_size_val = dest_size.value();
 
                         let invalid = if is_immediate {
-                            a > b
+                            src_size_val > dest_size_val
                         } else {
-                            a != b
+                            src_size_val != dest_size_val
                         };
+                        
                         if invalid {
-                            return Err(ErrorCode::InvalidValue(format!("Source {parameter} of size ({a}) bytes bytes and destination {memory_address} of size ({b}) bytes are not compatible")));
+                            return Err(ErrorCode::InvalidValue(format!(
+                                "Source {parameter} of size ({src_size_val}) bytes and destination {memory_address} of size ({dest_size_val}) bytes are not compatible"
+                            )));
                         }
                     }
 
-
-                    // Calculate effective address of destination            
+                    // Calculate effective address of the destination
                     match self.memory_manager.calculate_effective_address(memory_address_str_dest, &self.registers, true) {
-                        // Destination is valid address
+                        // If the destination is a valid address
                         Ok(parsed_address) => {
-                            // Get value and size of memory to mov into destination address
-                            let (constant, assumed_size ) = {
-                                self.parse_value_from_parameter(parameter, size_option_src)?
-                            };
+                            // Parse the value from the parameter and get its size
+                            let (constant, assumed_size) = self.parse_value_from_parameter(parameter, size_option_src)?;
 
-                            // Save EAX value
-                            let eax: u32 = self.get_register_value("EAX")?;
-                            // Load constant into EAX
-                            self.registers[get_register("EAX")].load_dword(constant);
+                            // Save the current value of EAX
+                            let eax: u32 = self.get_register_value(&RegisterName::EAX);
+                            // Load the constant into EAX
+                            self.registers[RegisterName::EAX.to_index()].load_dword(constant);
 
+                            // Perform the add or sub operation based on the size
                             match assumed_size {
-                                VariableSize::Byte => self.add_or_sub_mem_reg(parsed_address, "AL", is_addition)?,
-                                VariableSize::Word =>  self.add_or_sub_mem_reg(parsed_address, "AX", is_addition)?,
-                                VariableSize::DoubleWord =>  self.add_or_sub_mem_reg(parsed_address, "EAX", is_addition)?,
+                                VariableSize::Byte => self.add_or_sub_mem_reg(parsed_address, &RegisterName::AL, is_addition)?,
+                                VariableSize::Word => self.add_or_sub_mem_reg(parsed_address, &RegisterName::AX, is_addition)?,
+                                VariableSize::DoubleWord => self.add_or_sub_mem_reg(parsed_address, &RegisterName::EAX, is_addition)?,
                             };
-                            // Load original value back.
-                            self.registers[get_register("EAX")].load_dword(eax);
 
-
+                            // Restore the original value of EAX
+                            self.registers[RegisterName::EAX.to_index()].load_dword(eax);
                         },
-                        // Destination is not valid address
-                        Err(error) => return Err(error)
-                    }                    
+                        // If the destination is not a valid address, return the error
+                        Err(error) => return Err(error),
+                    }                           
                 },
                 ["add", _rest @ ..] => {
-                    let _ = skip_lines(lines_to_skip);
-                    lines_to_skip += 1;
+                    if debug {
+                        lines_to_skip += 1;
+                        let _ = skip_lines(lines_to_skip);
+                    }
                     println!("{}", Instruction::get_help_string(Instruction::Add));
                     return Err(ErrorCode::InvalidOpcode(line.join(", ")));
                 },
                 ["sub", _rest @ ..] => {
-                    let _ = skip_lines(lines_to_skip);
-                    lines_to_skip += 1;
+                    if debug {
+                        lines_to_skip += 1;
+                        let _ = skip_lines(lines_to_skip);
+                    }
                     println!("{}", Instruction::get_help_string(Instruction::Sub));
-                    
                     return Err(ErrorCode::InvalidOpcode(line.join(", ")));
                 },
                 // MULL / IMUL
-                [op @ ("mul" | "imul"), parameter] => {
+                [op @ ("mul"| "imul"), parameter] => {
                     // Determine size of the operand
-                    let (size_option_src, memory_address_str_src) = self.get_pointer_argument_size(parameter);
+                    let (size_option_src, memory_address_str_src) = self.get_argument_size(parameter);
 
                     let (src_value, backup_size) = self.parse_value_from_parameter(memory_address_str_src, None)?;
 
@@ -697,21 +728,30 @@ impl Engine {
                     self.mul_value(src_value, size, *op == "imul")?;
                 },
                 [op @ ("mul" | "imul"), _rest @ ..] => {
+                    // Determine if the operation is signed multiplication (IMUL) or unsigned multiplication (MUL)
                     let signed = *op == "imul";
-                    let _ = skip_lines(lines_to_skip);
-                    lines_to_skip += 1;
+                
+                    // Printing purposes
+                    if debug {
+                        lines_to_skip += 1;
+                        let _ = skip_lines(lines_to_skip);
+
+                    }
+                
+                    // Print the appropriate help string based on the operation
                     if signed {
                         println!("{}", Instruction::get_help_string(Instruction::Imul));
                     } else {
                         println!("{}", Instruction::get_help_string(Instruction::Mul));
                     }
-                    
+                
+                    // Return an error indicating the invalid opcode
                     return Err(ErrorCode::InvalidOpcode(line.join(", ")));
                 },
                 // DIV / IDIV Instructions
                 [op @ ("div" | "idiv"), parameter] => {
                     // Determine size of the operand
-                    let (size_option_src, memory_address_str_src) = self.get_pointer_argument_size(parameter);
+                    let (size_option_src, memory_address_str_src) = self.get_argument_size(parameter);
 
                     let (src_value, backup_size) = self.parse_value_from_parameter(memory_address_str_src, None)?;
 
@@ -720,88 +760,103 @@ impl Engine {
                     self.div_value(src_value, size, *op == "idiv")?;
                 },
                 [op @ ("div" | "idiv"), _rest @ ..] => {
+                    // Determine if the operation is signed (IDIV) or unsigned (DIV)
                     let signed = *op == "idiv";
-                    let _ = skip_lines(lines_to_skip);
-                    lines_to_skip += 1;
+                
+                    // Skip the current line as it's not valid
+                    if debug {
+                        lines_to_skip += 1;
+                        let _ = skip_lines(lines_to_skip);
+                    }
+                
+                    // Print the appropriate help string based on the operation
                     if signed {
                         println!("{}", Instruction::get_help_string(Instruction::Idiv));
                     } else {
                         println!("{}", Instruction::get_help_string(Instruction::Div));
                     }
-                    
+                
+                    // Return an error indicating the invalid opcode
                     return Err(ErrorCode::InvalidOpcode(line.join(", ")));
-                },                           
-                [op @ ("shr" | "shl"), register, parameter] if self.is_valid_register(register)=> {
-                    // Determine size of the operand
-                    /*          
-                    "The 'shr' instruction shifts the bits of the operand to the right.
-                    Syntax:
-                        shr <reg>, <const>
-                        shr [<mem>], <const>
-                        shr <reg>, <cl>
-                        shr [<mem>], <cl>
-                    */
+                },                         
+                // Handle SHR and SHL instructions
+                //         OP              REG          PARAMETER
+                [op @ ("shr" | "shl"), register, parameter] if RegisterName::is_valid_name(register) => {
+                    // Determine if the shift amount is an immediate value or 'CL'
                     let is_immediate: bool = parse_string_to_usize(parameter).is_some();
 
+                    // Get the register name from the string
+                    let register = &RegisterName::from_str(register).unwrap();
+
+                    // Determine if the shift amount is 'CL' (using the count in CL register) or an immediate value
                     let is_cl = *parameter == "CL";
-                    let value_src = if is_cl {
-                        self.get_register_value("CL")?
+                    let shift_amount = if is_cl {
+                        // Use the value from CL register if shift count is 'CL'
+                        self.get_register_value(&RegisterName::CL) as u8
                     } else if is_immediate {
-                        parse_string_to_usize(parameter).unwrap()
+                        // Parse the immediate value
+                        parse_string_to_usize(parameter).unwrap() as u8
                     } else {
+                        // Error: Parameter must be an immediate value or 'CL'
                         return Err(ErrorCode::InvalidValue(
-                            format!("Parameter {parameter} can only be an immediate value, or 'CL'")
+                            format!("Parameter {} can only be an immediate value, or 'CL'", parameter)
                         ));
                     };
 
-                    let register_size_option = get_register_size(register);
-                    let register_size = match register_size_option {
-                        Some(size) => size,
-                        None => return Err(ErrorCode::InvalidRegister(
-                            format!("{} is an invalid register.", register) // unreachable anyway
-                        )),
-                    };
+                    // Get the size of the register operand
+                    let register_size = get_register_size(register);
+
+                    // Determine if it's a shift right (SHR) or shift left (SHL)
                     let is_shr = *op == "shr";
+
+                    // Perform the shift operation based on the register size
                     match register_size {
                         VariableSize::Byte => {
-                            let value_masked = value_src & 0b111; // Mask to 3 bits (0-7)
-                            if value_src > 7 {
+                            let value_masked = shift_amount & 0b111; // Mask to 3 bits (0-7)
+                            if shift_amount > 7 {
                                 println!("[WARNING] Shift Amount is truncated to 3 bits: ({}).", value_masked);
                             }
-                            let top: bool = register.ends_with("H");
-                            let current_value: u8 = self.registers[get_register(register)].get_byte(top);
+
+                            let top = register.is_top();
+                            let current_value: u8 = self.registers[register.to_index()].get_byte(top);
                             let carry_flag = (current_value >> (value_masked - 1)) & 1; // Last bit shifted out
+
                             let new_value = if is_shr {
                                 current_value >> value_masked
                             } else {
                                 current_value << value_masked
                             };
-                            self.registers[get_register(register)].load_byte(new_value, top);
-                            self.set_flags(new_value as usize, VariableSize::Word, false);
+
+                            self.registers[register.to_index()].load_byte(new_value, top);
+                            self.set_flags(new_value as usize, VariableSize::Byte, false);
                             self.set_flag(Flag::Carry, carry_flag == 1);
                         },
                         VariableSize::Word => {
-                            let value_masked = value_src & 0b11111; // Mask to 5 bits (0-31)
-                            if value_src > 31 {
+                            let value_masked = shift_amount & 0b11111; // Mask to 5 bits (0-31)
+                            if shift_amount > 31 {
                                 println!("[WARNING] Shift Amount is truncated to 5 bits: ({}).", value_masked);
                             }
-                            let current_value: u16 = self.registers[get_register(register)].get_word();
+
+                            let current_value: u16 = self.registers[register.to_index()].get_word();
                             let carry_flag = (current_value >> (value_masked - 1)) & 1; // Last bit shifted out
+
                             let new_value = if is_shr {
                                 current_value >> value_masked
                             } else {
                                 current_value << value_masked
                             };
-                            self.registers[get_register(register)].load_word(new_value);
+
+                            self.registers[register.to_index()].load_word(new_value);
                             self.set_flags(new_value as usize, VariableSize::Word, false);
                             self.set_flag(Flag::Carry, carry_flag == 1);
                         },
                         VariableSize::DoubleWord => {
-                            let value_masked = value_src & 0b11111; // Mask to 5 bits (0-31)
-                            if value_src > 31 {
+                            let value_masked = shift_amount & 0b11111; // Mask to 5 bits (0-31)
+                            if shift_amount > 31 {
                                 println!("[WARNING] Shift Amount is truncated to 5 bits: ({}).", value_masked);
                             }
-                            let current_value: u32 = self.registers[get_register(register)].get_dword();
+
+                            let current_value: u32 = self.registers[register.to_index()].get_dword();
                             let carry_flag = (current_value >> (value_masked - 1)) & 1; // Last bit shifted out
 
                             let new_value = if is_shr {
@@ -809,49 +864,51 @@ impl Engine {
                             } else {
                                 current_value << value_masked
                             };
-                            self.registers[get_register(register)].load_dword(new_value);
-                            self.set_flags(new_value as usize, VariableSize::Word, false);
+
+                            self.registers[register.to_index()].load_dword(new_value);
+                            self.set_flags(new_value as usize, VariableSize::DoubleWord, false);
                             self.set_flag(Flag::Carry, carry_flag == 1);
                         },
                     }
                 },
+                // Handle SHR and SHL instructions with memory address operand
                 [op @ ("shr" | "shl"), memory_address, parameter] => {
-                    // Determine size of the operand
-                    /*          
-                    "The 'shr' instruction shifts the bits of the operand to the right.
-                    Syntax:
-                        shr <reg>, <const>
-                        shr [<mem>], <const>
-                        shr <reg>, <cl>
-                        shr [<mem>], <cl>
-                    */
+                    // Determine if the shift amount is an immediate value or 'CL'
                     let is_immediate: bool = parse_string_to_usize(parameter).is_some();
 
+                    // Determine if the shift count is 'CL' or an immediate value
                     let is_cl = *parameter == "CL";
-                    let value_src = if is_cl {
-                        self.get_register_value("CL")?
+                    let shift_amount = if is_cl {
+                        // Use the value from CL register if shift count is 'CL'
+                        self.get_register_value(&RegisterName::CL) as u8
                     } else if is_immediate {
-                        parse_string_to_usize(parameter).unwrap()
+                        // Parse the immediate value
+                        parse_string_to_usize(parameter).unwrap() as u8
                     } else {
+                        // Error: Parameter must be an immediate value or 'CL'
                         return Err(ErrorCode::InvalidValue(
-                            format!("Parameter {parameter} can only be an immediate value, or 'CL'")
+                            format!("Parameter {} can only be an immediate value, or 'CL'", parameter)
                         ));
                     };
 
-                    let (size_option_dst, trimmed_dst) = self.get_pointer_argument_size(memory_address);
+                    // Get the size of the destination operand
+                    let (size_option_dst, trimmed_dst) = self.get_argument_size(memory_address);
                     let (memory_value, size_dst) = self.parse_value_from_parameter(trimmed_dst, size_option_dst)?;
-                        
 
+                    // Calculate the effective address of the destination memory operand
                     let destination = self.memory_manager.calculate_effective_address(trimmed_dst, &self.registers, true)?;
 
+                    // Determine if it's a shift right (SHR) or shift left (SHL)
                     let is_shr = *op == "shr";
-                    // println!("{:?} {}", size_dst, memory_address);
+
+                    // Perform the shift operation based on the size of the destination operand
                     match size_dst {
                         VariableSize::Byte => {
-                            let value_masked = value_src & 0b111; // Mask to 3 bits (0-7)
-                            if value_src > 7 {
-                                println!("[WARNING] Shift Amount is truncated to 3 bits ({}).", value_masked);
+                            let value_masked = shift_amount & 0b111; // Mask to 3 bits (0-7)
+                            if shift_amount > 7 {
+                                println!("[WARNING] Shift Amount is truncated to 3 bits: ({}).", value_masked);
                             }
+
                             let current_value = memory_value as u8;
                             let carry_flag = (current_value >> (value_masked - 1)) & 1; // Last bit shifted out
 
@@ -860,15 +917,18 @@ impl Engine {
                             } else {
                                 current_value << value_masked
                             };
-                            self.set_flags(new_value as usize, VariableSize::Word, false);
+
+                            // Update the memory with the shifted value
                             self.memory_manager.set_byte(destination, new_value)?;
+                            self.set_flags(new_value as usize, VariableSize::Byte, false);
                             self.set_flag(Flag::Carry, carry_flag == 1);
                         },
                         VariableSize::Word => {
-                            let value_masked = value_src & 0b11111; // Mask to 5 bits (0-31)
-                            if value_src > 31 {
+                            let value_masked = shift_amount & 0b11111; // Mask to 5 bits (0-31)
+                            if shift_amount > 31 {
                                 println!("[WARNING] Shift Amount is truncated to 5 bits: ({}).", value_masked);
                             }
+
                             let current_value = memory_value as u16;
                             let carry_flag = (current_value >> (value_masked - 1)) & 1; // Last bit shifted out
 
@@ -877,15 +937,18 @@ impl Engine {
                             } else {
                                 current_value << value_masked
                             };
+
+                            // Update the memory with the shifted value
                             self.memory_manager.set_word(destination, new_value)?;
                             self.set_flags(new_value as usize, VariableSize::Word, false);
                             self.set_flag(Flag::Carry, carry_flag == 1);
                         },
                         VariableSize::DoubleWord => {
-                            let value_masked = value_src & 0b11111; // Mask to 5 bits (0-31)
-                            if value_src > 31 {
+                            let value_masked = shift_amount & 0b11111; // Mask to 5 bits (0-31)
+                            if shift_amount > 31 {
                                 println!("[WARNING] Shift Amount is truncated to 5 bits: ({}).", value_masked);
                             }
+
                             let current_value = memory_value as u32;
                             let carry_flag = (current_value >> (value_masked - 1)) & 1; // Last bit shifted out
 
@@ -894,10 +957,13 @@ impl Engine {
                             } else {
                                 current_value << value_masked
                             };
+
+                            // Update the memory with the shifted value
                             self.memory_manager.set_dword(destination, new_value)?;
                             self.set_flag(Flag::Carry, carry_flag == 1);
                         },
                     }
+
                 },
                 // PRINT  Instructions
                 ["print", parameter] => { 
@@ -908,8 +974,10 @@ impl Engine {
                     } else {
                         args.join(" ")
                     };
-                    let _ = skip_lines(lines_to_skip);
-                    lines_to_skip += 1;
+                    if debug {
+                        lines_to_skip += 1;
+                        let _ = skip_lines(lines_to_skip);
+                    }
                     if let Some((start_char, end_char)) = parameter.chars().next().zip(parameter.chars().rev().next()) {
                         if start_char == '\'' && end_char == '\'' {
                             println!("[PRINT]@[IP={ip}]:\t{parameter}\n");    
@@ -918,7 +986,7 @@ impl Engine {
                     }
 
 
-                    let (size, memory_address_str_src) = self.get_pointer_argument_size(&trimmed_parameter);
+                    let (size, memory_address_str_src) = self.get_argument_size(&trimmed_parameter);
                     let (src_value, _) = self.parse_value_from_parameter(memory_address_str_src, size)?;
                     if args.into_iter().skip(2).next() == Some("char") {
                         if let Some(src_value_char) = std::char::from_u32(src_value) {
@@ -940,15 +1008,17 @@ impl Engine {
                         _ => return Err(ErrorCode::InvalidOpcode(line.join(", ")))
                     };
 
-                    let _ = skip_lines(lines_to_skip);
-                    lines_to_skip += 1;
+                    if debug {
+                        lines_to_skip += 1;
+                        let _ = skip_lines(lines_to_skip);
+                    }
 
-                    let (size_option_src, trimmed_address) = self.get_pointer_argument_size(memory_address);
+                    let (size_option_src, trimmed_address) = self.get_argument_size(memory_address);
                     let size = size_option_src.unwrap_or(VariableSize::Byte);
                     if let Ok(parsed_address) = self.memory_manager.calculate_effective_address(trimmed_address, &self.registers, true) {
                         let (value, _) = self.parse_value_from_parameter(*number, None)?;
                         self.memory_manager.check_memory_address(parsed_address+(value as usize)*size.value())?;
-                        let ip = self.registers[get_register("IP")].get_word();
+                        let ip = self.registers[ip_index].get_word();
                         print!("[PRINT]@[IP={ip}][{parsed_address}..{}]:\t[", parsed_address+(value as usize)-1);
                         for i in 0..value {
                             match size {
@@ -1035,8 +1105,10 @@ impl Engine {
                             }
                         }
                     }
-                    let _ = skip_lines(lines_to_skip);
-                    lines_to_skip += 1;
+                    if debug {
+                        lines_to_skip += 1;
+                        let _ = skip_lines(lines_to_skip);
+                    }
                     if let Err(error) = self.memory_manager.save_variable(variable_name.to_string(), &bytes, size) {
                         return Err(error);
                     }
@@ -1044,8 +1116,10 @@ impl Engine {
                 //////// JUMPS ////////////
                 ["jmp", label] => {
                     if let Err(error) = self.jump_to(label) {     
-                        let _ = skip_lines(lines_to_skip);
-                        lines_to_skip += 1;
+                        if debug {
+                            lines_to_skip += 1;
+                            let _ = skip_lines(lines_to_skip);
+                        }
                         println!("{}", Instruction::get_help_string(Instruction::Jmp));
                         return Err(error);
                     }
@@ -1058,8 +1132,10 @@ impl Engine {
                         continue;
                     }
                     if let Err(error) = self.jump_to(label) {  
-                        let _ = skip_lines(lines_to_skip);
-                        lines_to_skip += 1;   
+                        if debug {
+                            lines_to_skip += 1;
+                            let _ = skip_lines(lines_to_skip);
+                        }   
                         match *_flag {
                             "je" =>  println!("{}", Instruction::get_help_string(Instruction::Je)),
                             "jz" =>  println!("{}", Instruction::get_help_string(Instruction::Jz)),
@@ -1081,8 +1157,10 @@ impl Engine {
                     }
             
                     if let Err(error) = self.jump_to(label) {   
-                        let _ = skip_lines(lines_to_skip);
-                        lines_to_skip += 1;
+                        if debug {
+                            lines_to_skip += 1;
+                            let _ = skip_lines(lines_to_skip);
+                        }
                         match *_flag {
                             "jg" =>  println!("{}", Instruction::get_help_string(Instruction::Jg)),
                             "jge" =>  println!("{}", Instruction::get_help_string(Instruction::Jge)),
@@ -1103,8 +1181,10 @@ impl Engine {
                     }
             
                     if let Err(error) = self.jump_to(label) {   
-                        let _ = skip_lines(lines_to_skip);
-                        lines_to_skip += 1; 
+                        if debug {
+                            lines_to_skip += 1;
+                            let _ = skip_lines(lines_to_skip);
+                        } 
                         match *_flag {
                             "jl" =>  println!("{}", Instruction::get_help_string(Instruction::Jl)),
                             "jle" =>  println!("{}", Instruction::get_help_string(Instruction::Jle)),
@@ -1121,8 +1201,10 @@ impl Engine {
                     }
             
                     if let Err(error) = self.jump_to(label) {     
-                        let _ = skip_lines(lines_to_skip);
-                        lines_to_skip += 1;  
+                        if debug {
+                            lines_to_skip += 1;
+                            let _ = skip_lines(lines_to_skip);
+                        }  
                         match *_flag {
                             "ja" =>  println!("{}", Instruction::get_help_string(Instruction::Ja)),
                             "jae" =>  println!("{}", Instruction::get_help_string(Instruction::Jae)),
@@ -1139,8 +1221,10 @@ impl Engine {
                     }
 
                     if let Err(error) = self.jump_to(label) {       
-                        let _ = skip_lines(lines_to_skip);
-                        lines_to_skip += 1;   
+                        if debug {
+                            lines_to_skip += 1;
+                            let _ = skip_lines(lines_to_skip);
+                        }   
                         match *_flag {
                             "jb" =>  println!("{}", Instruction::get_help_string(Instruction::Jb)),
                             "jbe" =>  println!("{}", Instruction::get_help_string(Instruction::Jbe)),
@@ -1152,11 +1236,11 @@ impl Engine {
                 // CMP
                 ["cmp", first_operand, second_operand] => {
 
-                    let (first_size_option, trimmed_first_parameter) = self.get_pointer_argument_size(first_operand);
+                    let (first_size_option, trimmed_first_parameter) = self.get_argument_size(first_operand);
                     let (first_operand_value, first_operand_size) = self.parse_value_from_parameter(trimmed_first_parameter, first_size_option)?;
 
 
-                    let (second_size_option, trimmed_second_parameter) = self.get_pointer_argument_size(second_operand);
+                    let (second_size_option, trimmed_second_parameter) = self.get_argument_size(second_operand);
                     let (second_operand_value, second_operand_size) = self.parse_value_from_parameter(trimmed_second_parameter, second_size_option)?;
 
                     let second_is_immediate: bool = parse_string_to_usize(second_operand).is_some();
@@ -1186,44 +1270,44 @@ impl Engine {
                     self.set_flag(Flag::Parity, result.count_ones() % 2 == 0);
                 },
                 ["call", label] => {
-                    let ip: u32 = self.get_register_value("IP")?;
+                    let ip: u32 = self.get_register_value(&RegisterName::IP);
                     match self.jump_to(label) {
                         Ok(_) => {
                             self.memory_manager.push_to_stack(ip, 
                                                               VariableSize::Word, 
-                                                              &mut self.registers[get_register("ESI")])?;
+                                                              &mut self.registers[RegisterName::ESI.to_index()])?;
                         },
                         Err(error) => return Err(error),
                     }
                 },
                 ["ret"] => {
                     let ip_from_stack = self.memory_manager.pop_from_stack(VariableSize::Word, 
-                                                                                &mut self.registers[get_register("ESI")])?;
+                                                                                &mut self.registers[RegisterName::ESI.to_index()])?;
                     // I would use JUMP_TO but it hates me apparently.
-                    self.registers[get_register("IP")].load_word(ip_from_stack as u16);
-                    // self.lines.set_ip(ip_from_stack as usize);	
+                    self.registers[ip_index].load_word(ip_from_stack as u16);
+                    // self.lines.set_ip(ip_from_stack as usize);    
                 } 
                 // STACK OPERATIONS
                 ["push", parameter] => {
                     // No "WORD PTR" etc.
 
-                    let (size_option, trimmed_parameter) = self.get_pointer_argument_size(parameter);
+                    let (size_option, trimmed_parameter) = self.get_argument_size(parameter);
 
                     let (value, size) = self.parse_value_from_parameter(trimmed_parameter, size_option)?;
-                    self.memory_manager.push_to_stack(value, size, &mut self.registers[get_register("SI")])?;
+                    self.memory_manager.push_to_stack(value, size, &mut self.registers[RegisterName::SI.to_index()])?;
 
                 },
                 ["pop", parameter] => {
                     // No "WORD PTR" etc.
-                    let (size_option, trimmed_parameter) = self.get_pointer_argument_size(parameter);
+                    let (size_option, trimmed_parameter) = self.get_argument_size(parameter);
 
                     let (_, size) = self.parse_value_from_parameter(trimmed_parameter, size_option)?;
-                    let popped_value = self.memory_manager.pop_from_stack(size, &mut self.registers[get_register("SI")])?;
-                    if self.is_valid_register(parameter) {
+                    let popped_value = self.memory_manager.pop_from_stack(size, &mut self.registers[RegisterName::SI.to_index()])?;
+                    if let Ok(register_name) = RegisterName::from_str(parameter) {
                         match size {
                             VariableSize::Byte => return Err(ErrorCode::InvalidValue("POP can only receive a 16-bit or 32-bit parameter.".to_string())),
-                            VariableSize::Word => self.registers[get_register(parameter)].load_word(popped_value as u16),
-                            VariableSize::DoubleWord => self.registers[get_register(parameter)].load_dword(popped_value),
+                            VariableSize::Word => self.registers[register_name.to_index()].load_word(popped_value as u16),
+                            VariableSize::DoubleWord => self.registers[register_name.to_index()].load_dword(popped_value),
                         }
                     } else {
                         // Calculate effective address of destination            
@@ -1282,7 +1366,7 @@ impl Engine {
             // Won't panic
             // If some JUMP was made, this will update the lines module.
             // If no JUMP was made, this basically does nothing, as it sets lines' ip to itself.
-            self.lines.set_ip(self.get_register_value("IP")? as usize);
+            self.lines.set_ip(self.get_register_value(&RegisterName::IP) as usize);
         }
         for _ in 0..lines_to_skip {
             println!("");
@@ -1291,16 +1375,17 @@ impl Engine {
     }
 
     fn jump_to(&mut self, label: &&str) -> Result<usize, ErrorCode> {
+        let ip_index = RegisterName::IP.to_index();
         if let Some(address) = self.memory_manager.labels.get(*label) {
             // self.lines.set_ip(*address);
-            self.registers[get_register("IP")].load_word(*address as u16);
+            self.registers[ip_index].load_word(*address as u16);
             Ok(*address)
         } else if let Some((start_ip, _)) = self.memory_manager.procs.get(*label) {
             // self.lines.set_ip(*start_ip);
-            self.registers[get_register("IP")].load_word(*start_ip as u16);
+            self.registers[ip_index].load_word(*start_ip as u16);
             Ok(*start_ip)
         } else {
-            let (size_option, trimmed) = self.get_pointer_argument_size(label);
+            let (size_option, trimmed) = self.get_argument_size(label);
 
             if trimmed != *label {
                 return Err(ErrorCode::InvalidPointer(
@@ -1322,7 +1407,7 @@ impl Engine {
                 ));
             }
 
-            self.registers[get_register("IP")].load_word(target as u16);
+            self.registers[ip_index].load_word(target as u16);
             // self.lines.set_ip(target);
             Ok(target)
         }
@@ -1332,173 +1417,199 @@ impl Engine {
     fn is_flag_on(&self, flag: Flag) -> bool {
         // No need to check, because we know FLAG is a valid register.
         // Also, it's 16 bits, i.e., we can convert it without issues.
-        let value = self.get_register_value("FLAG").unwrap() as u16;
+        let value = self.get_register_value(&RegisterName::FLAG) as u16;
         value & flag.value() != 0
     }
 
     // MOV operations
     // REG <- Reg, Const, Var, Mem
-    // Mem <- Reg, Const, Var, Mem
-    // Var <- Reg, Const, Var, Mem
+    // Mem <- Reg, Const, Var
+    // Var <- Reg, Const, Var
     // Const <- NOTHING, Const can't be moved into
 
-    fn mov_reg_const(&mut self, dest: &str, constant: u32) -> Result<(), ErrorCode>{
-        let size = match dest {
-            reg if reg.ends_with('L')|reg.ends_with('H') => {
-                self.registers[get_register(dest)].load_byte(constant as u8, reg.ends_with('H'));
+    fn mov_reg_const(&mut self, dest: &RegisterName, constant: u32) -> Result<(), ErrorCode>{
+        let index = dest.to_index();
+        let size = match get_register_size(dest) {
+            VariableSize::Byte => {
+                self.registers[index].load_byte(constant as u8, dest.is_top());
                 VariableSize::Byte
             },
-            "AX"|"BX"|"CX"|"DX"|"SI"|"DI"|"FLAG"|"IP" => {
-                self.registers[get_register(dest)].load_word(constant as u16);
+            VariableSize::Word => {
+                self.registers[index].load_word(constant as u16);
                 VariableSize::Word
             },
-            reg if reg.starts_with("E") => {
-                self.registers[get_register(dest)].load_dword(constant);
+            VariableSize::DoubleWord => {
+                self.registers[index].load_dword(constant);
                 VariableSize::DoubleWord
             }
-            _ => return Err(ErrorCode::InvalidRegister(dest.to_string()))
         };
         self.set_flags(constant as usize, size, false);
         Ok(())
     }
 
-    fn add_or_sub_mem_reg(&mut self, memory_address: usize, src: &str, is_addition: bool) -> Result<(), ErrorCode> {
-
-        let (result, overflowed, size) = match src {
-            reg if reg.ends_with('L') || reg.ends_with('H') => {
-                let src_value = self.registers[get_register(src)].get_byte(reg.ends_with('H'));
+    fn add_or_sub_mem_reg(
+        &mut self,
+        memory_address: usize,
+        src: &RegisterName,
+        is_addition: bool
+    ) -> Result<(), ErrorCode> {
+        let index = src.to_index();
+        let size = get_register_size(src);
+        
+        let (result, overflowed) = match size {
+            VariableSize::Byte => {
+                let src_value = self.registers[index].get_byte(src.is_top());
                 let dest_value = self.memory_manager.get_byte(memory_address)?;
-
-                let (sum, overflowed) = if is_addition {
+                let (result, overflowed) = if is_addition {
                     dest_value.overflowing_add(src_value)
                 } else {
                     dest_value.overflowing_sub(src_value)
                 };
-                self.memory_manager.set_byte(memory_address, sum)?;
-
-                (sum as u32, overflowed, VariableSize::Byte)
+                self.memory_manager.set_byte(memory_address, result)?;
+                (result as u32, overflowed)
             },
-            "AX" | "BX" | "CX" | "DX" | "SI" | "DI" | "FLAG" | "IP" | "SP" => {
-                let src_value = self.registers[get_register(src)].get_word();
+            VariableSize::Word => {
+                let src_value = self.registers[index].get_word();
                 let dest_value = self.memory_manager.get_word(memory_address)?;
-
-                let (sum, overflowed) = if is_addition {
+                let (result, overflowed) = if is_addition {
                     dest_value.overflowing_add(src_value)
                 } else {
                     dest_value.overflowing_sub(src_value)
                 };
-
-                self.memory_manager.set_word(memory_address, sum)?;
-
-                (sum as u32, overflowed, VariableSize::Word)
+                self.memory_manager.set_word(memory_address, result)?;
+                (result as u32, overflowed)
             },
-            reg if reg.starts_with('E') => {
+            VariableSize::DoubleWord => {
                 self.memory_manager.check_memory_address(memory_address)?;
-
-                let src_value = self.registers[get_register(src)].get_dword();
+                let src_value = self.registers[index].get_dword();
                 let dest_value = self.memory_manager.get_dword(memory_address)?;
-
-                let (sum, overflowed) = if is_addition {
+                let (result, overflowed) = if is_addition {
                     dest_value.overflowing_add(src_value)
                 } else {
                     dest_value.overflowing_sub(src_value)
                 };
-
-                self.memory_manager.set_dword(memory_address, sum)?;
-
-                (sum as u32, overflowed, VariableSize::DoubleWord)
+                self.memory_manager.set_dword(memory_address, result)?;
+                (result as u32, overflowed)
             },
-            _ => return Err(ErrorCode::InvalidRegister(src.to_string())),
         };
+        
         self.set_flags(result as usize, size, overflowed);
         Ok(())
     }
     
-    fn add_or_sub_reg_const(&mut self, dest: &str, constant: u32, is_addition: bool) -> Result<(), ErrorCode>{
-        match dest {
-            "AX"|"BX"|"CX"|"DX"|"ESI"|"EDI"|"FLAG"|"IP"|"SP" => {
-                if constant > u16::MAX as u32 {
-                    return Err(ErrorCode::InvalidValue(format!("Value {constant} can't fit in {dest}")));
-                }
-                let dest_value = self.get_register_value(dest)? as u16;
-                let (sum, overflowed) = if is_addition {
-                    dest_value.overflowing_add(constant as u16)
-                } else {
-                    dest_value.overflowing_sub(constant as u16)
-                };                
-                self.registers[get_register(dest)].load_word(sum);
-                self.set_flags(sum as usize,VariableSize::Byte,  overflowed);
-            }
-            reg if reg.ends_with('L') || reg.ends_with('H') => {
+    fn add_or_sub_reg_const(
+        &mut self,
+        dest: &RegisterName,
+        constant: u32,
+        is_addition: bool
+    ) -> Result<(), ErrorCode> {
+        let index = dest.to_index();
+        let size = get_register_size(dest);
+        match size {
+            VariableSize::Byte => {
                 if constant > u8::MAX as u32 {
-                    return Err(ErrorCode::InvalidValue(format!("Value {constant} can't fit in {dest}")));
+                    return Err(ErrorCode::InvalidValue(format!(
+                        "Value {} can't fit in {:?}",
+                        constant, dest
+                    )));
                 }
-                let dest_value = self.get_register_value(dest)? as u8;
-                let (sum, overflowed) = if is_addition {
+                let dest_value = self.get_register_value(dest) as u8;
+                let (result, overflowed) = if is_addition {
                     dest_value.overflowing_add(constant as u8)
                 } else {
                     dest_value.overflowing_sub(constant as u8)
-                };                
-                self.registers[get_register(dest)].load_byte(sum,  reg.ends_with('H'));
-                self.set_flags(sum as usize,VariableSize::Byte,  overflowed);
+                };
+                self.registers[index].load_byte(result, dest.is_top());
+                self.set_flags(result as usize, VariableSize::Byte, overflowed);
             },
-            reg if reg.starts_with('E') => {
-                let dest_value = self.get_register_value(dest)? as u32;
-
-                let (sum, overflowed) = if is_addition {
+            VariableSize::Word => {
+                if constant > u16::MAX as u32 {
+                    return Err(ErrorCode::InvalidValue(format!(
+                        "Value {} can't fit in {:?}",
+                        constant, dest
+                    )));
+                }
+                let dest_value = self.get_register_value(dest) as u16;
+                let (result, overflowed) = if is_addition {
+                    dest_value.overflowing_add(constant as u16)
+                } else {
+                    dest_value.overflowing_sub(constant as u16)
+                };
+                self.registers[index].load_word(result);
+                self.set_flags(result as usize, VariableSize::Word, overflowed);
+            },
+            VariableSize::DoubleWord => {
+                let dest_value = self.get_register_value(dest) as u32;
+                let (result, overflowed) = if is_addition {
                     dest_value.overflowing_add(constant)
                 } else {
                     dest_value.overflowing_sub(constant)
-                };          
-                self.registers[get_register(dest)].load_dword(sum);
-                
-                self.set_flags(sum as usize,VariableSize::DoubleWord, overflowed);
-            },
-            _ => {
-                return Err(ErrorCode::InvalidRegister(dest.to_string()));
+                };
+                self.registers[index].load_dword(result);
+                self.set_flags(result as usize, VariableSize::DoubleWord, overflowed);
             }
-        };
+        }
+    
         Ok(())
     }
 
-    fn set_register_value(&mut self, register: &str, value: u32) -> Result<(), ErrorCode>{
-        match get_register_size(register) {
-            Some(VariableSize::Byte) => {
+    fn set_register_value(
+        &mut self,
+        register_name: &RegisterName,
+        value: u32
+    ) -> Result<(), ErrorCode> {
+        let index = register_name.to_index();
+        let size = get_register_size(register_name);
+    
+        match size {
+            VariableSize::Byte => {
                 if value > u8::MAX as u32 {
-                    return Err(ErrorCode::InvalidValue(format!("Value {value} can't fit in {register}")));
+                    return Err(ErrorCode::InvalidValue(format!("Value {value} can't fit in {:?}", register_name)));
                 }
-                self.registers[get_register(register)].load_byte(value.try_into().unwrap(), register.ends_with('H'));
-                Ok(())
+                let is_top = matches!(
+                    register_name,
+                    RegisterName::AL | RegisterName::BL | RegisterName::CL | RegisterName::DL
+                );
+                self.registers[index].load_byte(value.try_into().unwrap(), is_top);
             },
-            Some(VariableSize::Word) => {
+            VariableSize::Word => {
                 if value > u16::MAX as u32 {
-                    return Err(ErrorCode::InvalidValue(format!("Value {value} can't fit in {register}")));
+                    return Err(ErrorCode::InvalidValue(format!("Value {value} can't fit in {:?}", register_name)));
                 }
-                self.registers[get_register(register)].load_word(value.try_into().unwrap());
-                Ok(())
-            }
-            Some(VariableSize::DoubleWord) => {
-                self.registers[get_register(register)].load_dword(value.try_into().unwrap());
-                Ok(())
-            }
-            _ => Err(ErrorCode::InvalidRegister(register.to_string()))
+                self.registers[index].load_word(value.try_into().unwrap());
+            },
+            VariableSize::DoubleWord => {
+                self.registers[index].load_dword(value.try_into().unwrap());
+            },
         }
+    
+        Ok(())
     }
 
-    fn set_flag(&mut self, flag: Flag, value: bool) {
+    fn set_flag(
+        &mut self,
+         flag: Flag,
+          value: bool
+    ) {
+        let index = RegisterName::FLAG.to_index();
         if value {
-            let current = self.registers[get_register("FLAG")].get_word();
-            self.registers[get_register("FLAG")].load_word(current | flag.value());
+            let current = self.registers[index].get_word();
+            self.registers[index].load_word(current | flag.value());
         } else {
-            let current = self.registers[get_register("FLAG")].get_word();
-            self.registers[get_register("FLAG")].load_word(current & !flag.value());
+            let current = self.registers[index].get_word();
+            self.registers[index].load_word(current & !flag.value());
         }
     }
 
     //////////// MUL ////////////
     // Multiply the value in the source register by the value in AX register.
 
-    fn mul_value(&mut self, src_value: u32, size: VariableSize , signed: bool) -> Result<(), ErrorCode>{
+    fn mul_value(
+        &mut self,
+        src_value: u32,
+        size: VariableSize,
+        signed: bool
+    ) -> Result<(), ErrorCode> {
         match size {
             VariableSize::Byte => self.mul_8bit(src_value as u8, signed),
             VariableSize::Word => self.mul_16bit(src_value as u16, signed),
@@ -1507,9 +1618,8 @@ impl Engine {
     }
     
     // Function to multiply 8-bit values and store the result in AX register.
-    fn mul_8bit(&mut self, src_value: u8, signed: bool) -> Result<(), ErrorCode>{
-        let ax_value = self.get_register_value("AX")?;
-        let al_value = ax_value as u8;
+    fn mul_8bit(&mut self, src_value: u8, signed: bool) -> Result<(), ErrorCode> {
+        let al_value = self.get_register_value(&RegisterName::AX) as u8;
     
         let result = if signed {
             let al_signed = al_value as i8;
@@ -1523,13 +1633,13 @@ impl Engine {
     
         self.set_flag(Flag::Carry, overflow_condition);
         self.set_flag(Flag::Overflow, overflow_condition);
-        self.set_register_value("AX", result as u32)?;
+        self.set_register_value(&RegisterName::AX, result as u32)?;
         Ok(())
     }
     
     // Function to multiply 16-bit values and store the result in DX:AX register.
     fn mul_16bit(&mut self, src_value: u16, signed: bool) -> Result<(), ErrorCode> {
-        let ax_value = self.get_register_value("AX")?;
+        let ax_value = self.get_register_value(&RegisterName::AX);
     
         let result = if signed {
             let ax_signed = ax_value as i16;
@@ -1543,14 +1653,14 @@ impl Engine {
     
         self.set_flag(Flag::Carry, overflow_condition);
         self.set_flag(Flag::Overflow, overflow_condition);
-        self.set_register_value("AX", result as u32)?;
-        self.set_register_value("DX", (result >> 16) as u32)?;
+        self.set_register_value(&RegisterName::AX, result & 0xFFFF)?;
+        self.set_register_value(&RegisterName::DX, (result >> 16) as u32)?;
         Ok(())
     }
     
     // Function to multiply 32-bit values and store the result in EDX:EAX register.
-    fn mul_32bit(&mut self, src_value: u32, signed: bool)-> Result<(), ErrorCode> {
-        let eax_value = self.get_register_value("EAX")?;
+    fn mul_32bit(&mut self, src_value: u32, signed: bool) -> Result<(), ErrorCode> {
+        let eax_value = self.get_register_value(&RegisterName::EAX);
     
         let result = if signed {
             let eax_signed = eax_value as i32;
@@ -1564,25 +1674,25 @@ impl Engine {
     
         self.set_flag(Flag::Carry, overflow_condition);
         self.set_flag(Flag::Overflow, overflow_condition);
-        self.set_register_value("EAX", result as u32)?;
-        self.set_register_value("EDX", (result >> 32) as u32)?;
+        self.set_register_value(&RegisterName::EAX, result as u32)?;
+        self.set_register_value(&RegisterName::EDX, (result >> 32) as u32)?;
         Ok(())
     }
 
-
-
-    /////////// DIV ////////////
-    // Divide the value in the source register by the value in the AX register.
-    fn div_value(&mut self, src_value: u32, size: VariableSize , signed: bool) -> Result<(), ErrorCode>{
+    /// DIV ////
+    /// Divide the value in the source register by the value in the AX register.
+    fn div_value(&mut self, src_value: u32, size: VariableSize, signed: bool) -> Result<(), ErrorCode> {
         match size {
             VariableSize::Byte => self.div_8bit(src_value as u8, signed),
             VariableSize::Word => self.div_16bit(src_value as u16, signed),
             VariableSize::DoubleWord => self.div_32bit(src_value, signed),
         }
     }
-    // AX / src_value, AH = AX % src_value
+
+    /// Perform 8-bit division: AX / src_value, AH = AX % src_value
     fn div_8bit(&mut self, src_value: u8, signed: bool) -> Result<(), ErrorCode> {
-        let ax_value = self.get_register_value("AX")? as u16;
+        let ax_value = self.get_register_value(&RegisterName::AX) as u16;
+
         if src_value == 0 {
             return Err(ErrorCode::DivisionByZero);
         }
@@ -1596,19 +1706,21 @@ impl Engine {
             ((ax_value / src_value as u16) as u8, (ax_value % src_value as u16) as u8)
         };
 
-        self.set_register_value("AL", quotient as u32)?;
-        self.set_register_value("AH", remainder as u32)?;
+        self.set_register_value(&RegisterName::AL, quotient as u32)?;
+        self.set_register_value(&RegisterName::AH, remainder as u32)?;
         Ok(())
     }
 
-    // DX:AX / src_value, DX = DX:AX % src_value
+    /// Perform 16-bit division: DX:AX / src_value, DX = DX:AX % src_value
     fn div_16bit(&mut self, src_value: u16, signed: bool) -> Result<(), ErrorCode> {
-        let ax_value = self.get_register_value("AX")?;
-        let dx_value = self.get_register_value("DX")?;
+        let ax_value = self.get_register_value(&RegisterName::AX);
+        let dx_value = self.get_register_value(&RegisterName::DX);
         let dividend = ((dx_value as u32) << 16) | (ax_value as u32);
+
         if src_value == 0 {
             return Err(ErrorCode::DivisionByZero);
         }
+
         let (quotient, remainder) = if signed {
             let dividend_signed = dividend as i32;
             let src_signed = src_value as i16;
@@ -1618,53 +1730,45 @@ impl Engine {
             ((dividend / src_value as u32) as u16, (dividend % src_value as u32) as u16)
         };
 
-        self.set_register_value("AX", quotient as u32)?;
-        self.set_register_value("DX", remainder as u32)?;
+        self.set_register_value(&RegisterName::AX, quotient as u32)?;
+        self.set_register_value(&RegisterName::DX, remainder as u32)?;
         Ok(())
     }
 
+    /// Perform 32-bit division: EDX:EAX / src_value, EDX = EDX:EAX % src_value
     fn div_32bit(&mut self, src_value: u32, signed: bool) -> Result<(), ErrorCode> {
-        // Fetch EAX and EDX register values
-        let eax_value = self.get_register_value("EAX")?;  // Assuming this retrieves u32
-        let edx_value = self.get_register_value("EDX")?;  // Assuming this retrieves u32
+        let eax_value = self.get_register_value(&RegisterName::EAX);
+        let edx_value = self.get_register_value(&RegisterName::EDX);
 
-        // Create the 64-bit dividend from EDX:EAX
         let dividend = ((edx_value as u64) << 32) | (eax_value as u64);
 
-        // Handle division by zero
         if src_value == 0 {
             return Err(ErrorCode::DivisionByZero);
         }
 
-        // Perform division and modulus based on signed or unsigned mode
-        let ((quotient, remainder), overflowed) = if signed {
-            // Signed division and modulus
+        let (quotient, remainder, overflowed) = if signed {
             let dividend_signed = dividend as i64;
             let src_signed = src_value as i32;
-            
-            // Check for overflow in division (when dividing i64::MIN by -1)
+
             if src_signed == -1 && dividend_signed == i64::MIN {
                 return Err(ErrorCode::Overflow);
             }
 
             let (q, overflow1) = dividend_signed.overflowing_div(src_signed as i64);
             let (r, overflow2) = dividend_signed.overflowing_rem(src_signed as i64);
-            ((q as u32, r as u32), overflow1 || overflow2)
+            (q as u32, r as u32, overflow1 || overflow2)
         } else {
-            // Unsigned division and modulus
             let (q, overflow1) = dividend.overflowing_div(src_value as u64);
             let (r, overflow2) = dividend.overflowing_rem(src_value as u64);
-            ((q as u32, r as u32), overflow1 || overflow2)
+            (q as u32, r as u32, overflow1 || overflow2)
         };
 
-        // Check for overflow and return error if necessary
         if overflowed {
             return Err(ErrorCode::Overflow);
         }
 
-        // Update EAX and EDX registers with quotient and remainder
-        self.set_register_value("EAX", quotient)?;
-        self.set_register_value("EDX", remainder)?;
+        self.set_register_value(&RegisterName::EAX, quotient)?;
+        self.set_register_value(&RegisterName::EDX, remainder)?;
         Ok(())
     }
 }
@@ -1677,7 +1781,7 @@ impl fmt::Display for Engine {
             let register: &Register = &self.registers[i];
             let low_byte = (register.get_word() & 0xFF) as u8;
             let high_byte = ((register.get_word() >> 8) & 0xFF) as u8;
-            let reg_string = format!("Register {}:\t{}\t({:08b} {:08b})", register.name, register.get_word(), high_byte, low_byte);
+            let reg_string = format!("Register {:?}:\t{}\t({:08b} {:08b})", register.name, register.get_word(), high_byte, low_byte);
             write!(f, "{reg_string}  ")?;
             
             let start_index = if i > 6 {

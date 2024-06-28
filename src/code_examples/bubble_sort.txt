@@ -1,5 +1,4 @@
-arr db, 'zyxwvutsrqponmlkjihgfedcba', 255
-
+arr db, 37, 9, 8, 2, 1, 1, 4, 4, 255
 find_length:
    inc BX            ; Increment counter
    cmp [arr+BX], 255 ; Compare to array-termination-character (set to 255)
@@ -32,4 +31,4 @@ flip_two:
 
 exit:
    inc BX   ; Bring BX back to its original size
-   print BX, char [arr] ; Print N (length of array) bytes
+   print BX, [arr] ; Print N (length of array) bytes

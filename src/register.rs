@@ -1,15 +1,108 @@
 
 use crate::variable_metadata::VariableSize;
+use crate::ErrorCode;
 #[derive(Clone)]
 pub struct Register {
     value: u32,
-    pub name: String,
+    pub name: RegisterName,
+    pub index: usize,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub enum RegisterName {
+    EAX,
+    AX,
+    AL,
+    AH,
+    EBX,
+    BX,
+    BL,
+    BH,
+    ECX,
+    CX,
+    CL,
+    CH,
+    EDX,
+    DX,
+    DL,
+    DH,
+    ESI,
+    SI,
+    EDI,
+    DI,
+    BP,
+    SP,
+    IP,
+    FLAG,
+}
+impl RegisterName {
+    pub fn from_str(input: &str) -> Result<Self, ErrorCode> {
+        match input {
+            "EAX" => Ok(RegisterName::EAX),
+            "AX" => Ok(RegisterName::AX),
+            "AL" => Ok(RegisterName::AL),
+            "AH" => Ok(RegisterName::AH),
+            "EBX" => Ok(RegisterName::EBX),
+            "BX" => Ok(RegisterName::BX),
+            "BL" => Ok(RegisterName::BL),
+            "BH" => Ok(RegisterName::BH),
+            "ECX" => Ok(RegisterName::ECX),
+            "CX" => Ok(RegisterName::CX),
+            "CL" => Ok(RegisterName::CL),
+            "CH" => Ok(RegisterName::CH),
+            "EDX" => Ok(RegisterName::EDX),
+            "DX" => Ok(RegisterName::DX),
+            "DL" => Ok(RegisterName::DL),
+            "DH" => Ok(RegisterName::DH),
+            "ESI" => Ok(RegisterName::ESI),
+            "SI" => Ok(RegisterName::SI),
+            "EDI" => Ok(RegisterName::EDI),
+            "DI" => Ok(RegisterName::DI),
+            "BP" => Ok(RegisterName::BP),
+            "SP" => Ok(RegisterName::SP),
+            "IP" => Ok(RegisterName::IP),
+            "FLAG" => Ok(RegisterName::FLAG),
+            _ => Err(ErrorCode::InvalidRegister(
+                format!("{} is an invalid register.", input)
+            )),
+        }
+    }
+
+    pub fn is_valid_name(name: &str) -> bool {
+        match RegisterName::from_str(name) {
+            Ok(_) => true,
+            Err(_) => false,
+        }
+    }
+
+    pub fn to_index(&self) -> usize {
+        match self {
+            RegisterName::EAX | RegisterName::AX | RegisterName::AL | RegisterName::AH => 0,
+            RegisterName::EBX | RegisterName::BX | RegisterName::BL | RegisterName::BH => 1,
+            RegisterName::ECX | RegisterName::CX | RegisterName::CL | RegisterName::CH => 2,
+            RegisterName::EDX | RegisterName::DX | RegisterName::DL | RegisterName::DH => 3,
+            RegisterName::ESI | RegisterName::SI => 4,
+            RegisterName::EDI | RegisterName::DI => 5,
+            RegisterName::BP => 6,
+            RegisterName::SP => 7,
+            RegisterName::IP => 8,
+            RegisterName::FLAG => 9,
+        }
+    }
+    pub fn is_top(&self) -> bool {
+        match self {
+            RegisterName::AL | RegisterName::BL | RegisterName::CL | RegisterName::DL => false,
+            RegisterName::AH | RegisterName::BH | RegisterName::CH | RegisterName::DH => true,
+            _ => unimplemented!()
+        }
+    }
+
+}
 
 impl Register {
-    pub fn new(name: &str) -> Self {
-        Self { value: 0, name: name.to_string() }
+    pub fn new(name: RegisterName) -> Self {
+        let index = &name.to_index();
+        Self { value: 0, name: name, index: *index }
     }
 
     pub fn get_byte(&self, top: bool) -> u8 {
@@ -48,29 +141,19 @@ impl Register {
     pub fn load_dword(&mut self, value: u32) {
         self.value = value;
     }
+
 }
 
-pub fn get_register_size(reg_name: &str) -> Option<VariableSize> {
+pub fn get_register_size(reg_name: &RegisterName) -> VariableSize {
     match reg_name {
-        "AL" | "BL" | "CL" | "DL" | "AH" | "BH" | "CH" | "DH" => Some(VariableSize::Byte),
-        "AX" | "BX" | "CX" | "DX" | "SI" | "DI" | "IP" | "FLAG" => Some(VariableSize::Word),
-        "EAX" | "EBX" | "ECX" | "EDX" | "ESI" | "EDI"  => Some(VariableSize::DoubleWord),
-        _ => None
-    }
-}
+        RegisterName::AL | RegisterName::BL | RegisterName::CL | RegisterName::DL |
+        RegisterName::AH | RegisterName::BH | RegisterName::CH | RegisterName::DH => VariableSize::Byte,
+        
+        RegisterName::AX | RegisterName::BX | RegisterName::CX | RegisterName::DX |
+        RegisterName::SI | RegisterName::DI | RegisterName::IP | RegisterName::FLAG |
+        RegisterName::BP | RegisterName::SP => VariableSize::Word,
 
-pub fn get_register(name: &str) -> usize{
-    match name {
-        "EAX"|"AX"|"AL"|"AH" => 0,
-        "EBX"|"BX"|"BL"|"BH" => 1,
-        "ECX"|"CX"|"CL"|"CH" => 2,
-        "EDX"|"DX"|"DL"|"DH" => 3,
-        "ESI"|"SI" => 4,
-        "EDI"|"DI" => 5,
-        "BP" => 6,
-        "SP" => 7,
-        "IP" => 8,   
-        "FLAG" => 9,   
-        _ => panic!("Invalid register name: {}", name),
+        RegisterName::EAX | RegisterName::EBX | RegisterName::ECX | RegisterName::EDX |
+        RegisterName::ESI | RegisterName::EDI => VariableSize::DoubleWord
     }
 }

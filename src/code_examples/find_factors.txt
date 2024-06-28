@@ -1,14 +1,14 @@
 number dd, 102
 factors dd, 0
 mov ECX, 0 ; counter
-mov ESI, 1
+mov ESI, 1 
+
 loop:
   inc ESI
   cmp [number], 1
   je exit 
 
 continue_dividing:
-
   mov EAX, DWORD PTR [number]
   mov EDX, 0
   div ESI

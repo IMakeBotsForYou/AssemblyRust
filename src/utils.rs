@@ -54,7 +54,7 @@ pub fn execute_engine(assembly: &mut Engine, verbose: bool) {
     match result {
         Ok(_) => (),
         Err(e) => {
-            let ip = assembly.get_register_value("IP").expect("Couldn't get IP");
+            let ip = assembly.lines.get_ip();
             panic!("Errored during execution.\n{}\nLINE: {}", e, ip);
         },
     }
