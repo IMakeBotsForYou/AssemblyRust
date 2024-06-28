@@ -363,8 +363,13 @@ pub fn get_register_value(registers: &[Register; 10], reg_name: &RegisterName) -
     let value = reg.get_dword();
 
     match get_register_size(reg_name) {
-        VariableSize::Byte if !reg_name.is_top() => value & 0x000000FF,
-        VariableSize::Byte => value & 0x0000FF00,
+        VariableSize::Byte => {
+            if reg_name.is_top().unwrap() {
+                (value & 0x0000FF00) >> 8
+            } else {
+                value & 0x000000FF
+            }
+        },
         VariableSize::Word => value & 0x0000FFFF,
         VariableSize::DoubleWord => value,
     }

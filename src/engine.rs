@@ -157,7 +157,7 @@ impl Engine {
         let value = reg.get_dword();
         match get_register_size(reg_name) {
             VariableSize::Byte => {
-                if reg_name.is_top() {
+                if reg_name.is_top().unwrap() {
                     (value & 0x0000FF00) >> 8
                 } else {
                     value & 0x000000FF
@@ -816,8 +816,8 @@ impl Engine {
                             if shift_amount > 7 {
                                 println!("[WARNING] Shift Amount is truncated to 3 bits: ({}).", value_masked);
                             }
-
-                            let top = register.is_top();
+                             // Confirmed to be byte sized by earlier if/match
+                            let top = register.is_top().unwrap();
                             let current_value: u8 = self.registers[register.to_index()].get_byte(top);
                             let carry_flag = (current_value >> (value_masked - 1)) & 1; // Last bit shifted out
 
@@ -1431,14 +1431,14 @@ impl Engine {
         let index = dest.to_index();
         let size = match get_register_size(dest) {
             VariableSize::Byte => {
-                if constant > u8::MAX.into() {
+                if constant as i32 > u8::MAX.into() {
                     return Err(ErrorCode::InvalidValue(format!("Value {constant} cannot fit into {:?}", dest)));
-                }
-                self.registers[index].load_byte(constant as u8, dest.is_top());
+                }                                       // Confirmed to be byte sized by earlier if/match
+                self.registers[index].load_byte(constant as u8, dest.is_top().unwrap());
                 VariableSize::Byte
             },
             VariableSize::Word => {
-                if constant > u16::MAX.into() {
+                if constant as i32 > u16::MAX.into() {
                     return Err(ErrorCode::InvalidValue(format!("Value {constant} cannot fit into {:?}", dest)));
                 }
                 self.registers[index].load_word(constant as u16);
@@ -1463,8 +1463,8 @@ impl Engine {
         let size = get_register_size(src);
         
         let (result, overflowed) = match size {
-            VariableSize::Byte => {
-                let src_value = self.registers[index].get_byte(src.is_top());
+            VariableSize::Byte => {                             //Confirmed to be byte sized by earlier if/match
+                let src_value = self.registers[index].get_byte(src.is_top().unwrap());
                 let dest_value = self.memory_manager.get_byte(memory_address)?;
                 let (result, overflowed) = if is_addition {
                     dest_value.overflowing_add(src_value)
@@ -1524,8 +1524,8 @@ impl Engine {
                     dest_value.overflowing_add(constant as u8)
                 } else {
                     dest_value.overflowing_sub(constant as u8)
-                };
-                self.registers[index].load_byte(result, dest.is_top());
+                };                                      //Confirmed to be byte sized by earlier if/match
+                self.registers[index].load_byte(result, dest.is_top().unwrap());
                 self.set_flags(result as usize, VariableSize::Byte, overflowed);
             },
             VariableSize::Word => {
@@ -1571,13 +1571,8 @@ impl Engine {
             VariableSize::Byte => {
                 if value > u8::MAX as u32 {
                     return Err(ErrorCode::InvalidValue(format!("Value {value} can't fit in {:?}", register_name)));
-                }
-                let is_top = matches!(
-                    register_name,
-                    RegisterName::AL | RegisterName::BL | RegisterName::CL | RegisterName::DL
-                );
-                self.registers[index].load_byte(value.try_into().unwrap(), is_top);
-            },
+                }                                             // Confirmed to be byte sized by earlier if/match
+                self.registers[index].load_byte(value.try_into().unwrap(), register_name.is_top().unwrap());            },
             VariableSize::Word => {
                 if value > u16::MAX as u32 {
                     return Err(ErrorCode::InvalidValue(format!("Value {value} can't fit in {:?}", register_name)));

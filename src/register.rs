@@ -89,11 +89,16 @@ impl RegisterName {
             RegisterName::FLAG => 9,
         }
     }
-    pub fn is_top(&self) -> bool {
+    pub fn is_top(&self) -> Result<bool, ErrorCode> {
         match self {
-            RegisterName::AL | RegisterName::BL | RegisterName::CL | RegisterName::DL => false,
-            RegisterName::AH | RegisterName::BH | RegisterName::CH | RegisterName::DH => true,
-            _ => unimplemented!()
+            RegisterName::AL | RegisterName::BL | RegisterName::CL | RegisterName::DL => Ok(false),
+            RegisterName::AH | RegisterName::BH | RegisterName::CH | RegisterName::DH => Ok(true),
+            _ => Err(ErrorCode::InvalidRegister(
+                        format!(
+                            "Register {:?} is not a single-byte register, thus it can't have a top-bottom",
+                            self)
+                        )
+                    )
         }
     }
 
