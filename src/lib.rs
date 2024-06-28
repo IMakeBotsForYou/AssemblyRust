@@ -24,34 +24,36 @@ use crate::{
 
 #[cfg(test)]
 mod tests {
+    use register::RegisterName;
+
     use super::*;
     #[test]
     fn add_sub() {
         let mut assembly = initialize_engine("./src/unit_tests/add_sub.txt");
         execute_engine(&mut assembly, false);
-        assert!(assembly.registers[0].get_word() == 512); // AX
-        assert!(assembly.registers[1].get_word() == 513); // BX
-        assert!(assembly.registers[2].get_word() == 1);   // CX
+        assert!(assembly.registers[RegisterName::AX.to_index()].get_word() == 512);
+        assert!(assembly.registers[RegisterName::BX.to_index()].get_word() == 513);
+        assert!(assembly.registers[RegisterName::CX.to_index()].get_word() == 1);
     }
     #[test]
     fn mul_div() {
         let mut assembly = initialize_engine("./src/unit_tests/mul_div.txt");
         execute_engine(&mut assembly, false);
-        assert!(assembly.registers[0].get_word() == 3);  // AX
-        assert!(assembly.registers[1].get_word() == 3);  // BX
-        assert!(assembly.registers[2].get_word() == 0);  // CX
-        assert!(assembly.registers[3].get_word() == 1);  // DX
-        assert!(assembly.registers[4].get_word() == 10); // SI
-        assert!(assembly.registers[5].get_word() == 5);  // DI
+        assert!(assembly.registers[RegisterName::AX.to_index()].get_word() == 3);
+        assert!(assembly.registers[RegisterName::BX.to_index()].get_word() == 3);
+        assert!(assembly.registers[RegisterName::CX.to_index()].get_word() == 0);
+        assert!(assembly.registers[RegisterName::DX.to_index()].get_word() == 1);
+        assert!(assembly.registers[RegisterName::SI.to_index()].get_word() == 10);
+        assert!(assembly.registers[RegisterName::DI.to_index()].get_word() == 5);
     }
     #[test]
     fn imul_idiv() {
         let mut assembly = initialize_engine("./src/unit_tests/imul_idiv.txt");
         execute_engine(&mut assembly, false);
-        assert!(assembly.registers[0].get_word() as i16 == -5);  // AX
-        assert!(assembly.registers[1].get_word() as i16 == -5);  // BX
-        assert!(assembly.registers[2].get_word() == 2);  // CX
-        assert!(assembly.registers[3].get_word() == 0);  // DX
+        assert!(assembly.registers[RegisterName::AX.to_index()].get_word() as i16 == -5);
+        assert!(assembly.registers[RegisterName::BX.to_index()].get_word() as i16 == -5);
+        assert!(assembly.registers[RegisterName::CX.to_index()].get_word() == 2);
+        assert!(assembly.registers[RegisterName::DX.to_index()].get_word() == 0);
     }
     #[test]
     fn shr_shl() {
@@ -60,13 +62,13 @@ mod tests {
     
         let expected_memory: Vec<u8> = vec![4, 0, 0, 0];
         verify_memory(&assembly, &expected_memory, 4);
-        assert!(assembly.registers[1].get_word() == 5);
+        assert!(assembly.registers[1].get_word() == 5); // TODO: What RegisterName is this?
     }
     #[test]
     fn fibonacci() {
         let mut assembly = initialize_engine("./src/code_examples/fibonacci.txt");
         execute_engine(&mut assembly, false);
-        assert!(assembly.registers[0].get_word() == 89);
+        assert!(assembly.registers[0].get_word() == 89); // TODO: What RegisterName is this?
     }
 
     #[test]
@@ -96,7 +98,4 @@ mod tests {
         let expected_memory: Vec<u8> = vec![0, 0, 0, 1, 0, 0, 0, 2, 0, 0, 0, 3, 0, 0, 0, 17];
         verify_memory(&assembly, &expected_memory, 4 * 4);
     }
-
-
-
 }
