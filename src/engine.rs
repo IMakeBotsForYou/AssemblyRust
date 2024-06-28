@@ -1572,11 +1572,7 @@ impl Engine {
                 if value > u8::MAX as u32 {
                     return Err(ErrorCode::InvalidValue(format!("Value {value} can't fit in {:?}", register_name)));
                 }
-                let is_top = matches!(
-                    register_name,
-                    RegisterName::AL | RegisterName::BL | RegisterName::CL | RegisterName::DL
-                );
-                self.registers[index].load_byte(value.try_into().unwrap(), is_top);
+                self.registers[index].load_byte(value.try_into().unwrap(), register_name.is_top());
             },
             VariableSize::Word => {
                 if value > u16::MAX as u32 {
