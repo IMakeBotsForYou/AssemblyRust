@@ -5,3 +5,5 @@
 /src/main.exe
 /scc/main.pdb
 /.vscode
+/src/settings.json
+settings.json
