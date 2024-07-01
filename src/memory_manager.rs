@@ -97,7 +97,7 @@ impl MemoryManager {
     pub fn save_label(&mut self, name: String, ip: usize) -> Result<(), ErrorCode> {
         let name_copy = name.clone();
         if self.labels.insert(name, ip).is_some() {
-            return Err(ErrorCode::LabelAlreadyExists(name_copy));
+            Err(ErrorCode::LabelAlreadyExists(name_copy))
         } else {
             Ok(())
         }
@@ -110,7 +110,7 @@ impl MemoryManager {
     ) -> Result<(), ErrorCode> {
         let name_copy = name.clone();
         if self.procs.insert(name, (start_ip, end_ip)).is_some() {
-            return Err(ErrorCode::LabelAlreadyExists(name_copy));
+            Err(ErrorCode::LabelAlreadyExists(name_copy))
         } else {
             Ok(())
         }
@@ -125,7 +125,7 @@ impl MemoryManager {
 
         let length = data.len() * multiplier;
 
-        if self.variable_pointers.get(&variable_name).is_some() {
+        if self.variable_pointers.contains_key(&variable_name) {
             return Err(ErrorCode::LabelAlreadyExists(variable_name));
         }
         if let Ok(location) = self.find_free_block(length) {
@@ -170,7 +170,7 @@ impl MemoryManager {
         let mut start_index = 0;
 
         // If there's no variables yet, return the first available space
-        if self.variable_pointers.len() == 0 {
+        if self.variable_pointers.is_empty() {
             return Ok(0);
         }
 
@@ -190,9 +190,7 @@ impl MemoryManager {
             }
 
             start_index = end_index; // Move start_index to end of current block
-            if let Err(error) = self.check_memory_address(start_index) {
-                return Err(error);
-            }
+            self.check_memory_address(start_index)?
         }
 
         if start_index + length < self.get_code_segment_displacement() {
@@ -211,11 +209,11 @@ impl MemoryManager {
     pub fn is_valid_variable_name(&self, text: &str) -> bool {
         let variable_pattern = Regex::new(r"^([a-zA-Z_]+)$").unwrap();
         if let Some(captures) = variable_pattern.captures(text) {
-            if let Some(_) = captures.get(1) {
+            if captures.get(1).is_some() {
                 return true;
             }
         }
-        return false;
+        false
     }
 
     pub fn is_memory_operand(&self, operand: &str) -> bool {
@@ -263,7 +261,7 @@ impl MemoryManager {
                 ))?;
 
                 // Get the index value from registers or as a direct value
-                let index_value = if let Ok(register_name) = RegisterName::from_str(index_part) {
+                let index_value = if let Ok(register_name) =RegisterName::from_str_to_reg_name(index_part) {
                     get_register_value(registers, &register_name) as usize
                 } else {
                     parse_string_to_usize(index_part)
@@ -334,7 +332,7 @@ impl MemoryManager {
             }
 
         // Handle register values based on is_negative flag
-        } else if let Ok(register_name) = RegisterName::from_str(part) {
+        } else if let Ok(register_name) =RegisterName::from_str_to_reg_name(part) {
             Some(if is_negative {
                 -(get_register_value(registers, &register_name) as isize)
             } else {
@@ -342,11 +340,7 @@ impl MemoryManager {
             })
 
         // Handle labels directly
-        } else if let Some(v) = self.labels.get(part) {
-            Some(*v as isize)
-        } else {
-            None
-        }
+        } else { self.labels.get(part).map(|v| *v as isize) }
     }
 
     pub fn set_byte(&mut self, index: usize, value: u8) -> Result<(), ErrorCode> {

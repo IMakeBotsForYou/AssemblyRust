@@ -8,12 +8,12 @@ pub struct LineProcessor {
 impl LineProcessor {
     pub fn new(lines: Vec<String>) -> Self {
         LineProcessor {
-            lines: lines,
+            lines,
             ip: 0,
         }
     }
 
-    pub fn next(&mut self) -> Option<Vec<String>> {
+    pub fn next_line(&mut self) -> Option<Vec<String>> {
         while self.ip < self.lines.len() {
             let line = self.lines[self.ip].clone();
             let whole_line = line.trim();
@@ -45,7 +45,7 @@ impl LineProcessor {
 
             self.ip += 1;
             let mut parts = vec![instruction];
-            if operands[0] != "".to_string() {
+            if operands[0] != *"" {
                 parts.extend(operands);
             }
             return Some(parts);
@@ -65,7 +65,7 @@ impl LineProcessor {
 
     pub fn peak(&mut self) -> Option<(Vec<String>, usize)> {
         let prev_ip = self.ip; // Capture current instruction pointer
-        let res = self.next(); // Get the next instruction
+        let res = self.next_line(); // Get the next instruction
         let next_ip = self.ip; // Capture the updated instruction pointer
         self.set_ip(prev_ip); // Restore the instruction pointer to its original state
         res.map(|line| (line, next_ip)) // Return the result along with the updated instruction pointer

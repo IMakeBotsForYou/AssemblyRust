@@ -16,26 +16,21 @@ pub fn read_lines_from_file(filename: &str) -> io::Result<Vec<String>> {
 }
 
 pub fn parse_string_to_usize(value: &str) -> Option<u32> {
-    let parsed_value = if value.ends_with("h") {
+    let (radix, number) = if let Some(stripped) = value.strip_suffix('h') {
         // Hexadecimal format
-        match i32::from_str_radix(&value[..value.len() - 1], 16).ok() {
-            Some(v) => Some(v as u32),
-            None => None,
-        }
-    } else if value.ends_with("b") {
+        (16, stripped)
+    } else if let Some(stripped) = value.strip_suffix('b') {
         // Binary format
-        match i32::from_str_radix(&value[..value.len() - 1], 2).ok() {
-            Some(v) => Some(v as u32),
-            None => None,
-        }
+        (2, stripped)
     } else {
         // Decimal format
-        match i32::from_str_radix(&value, 10).ok() {
-            Some(v) => Some(v as u32),
-            None => None,
-        }
+        (10, value)
     };
-    parsed_value
+
+    match i32::from_str_radix(number, radix) {
+        Ok(v) => Some(v as u32),
+        Err(_) => None
+    }
 }
 
 pub fn initialize_engine(file_path: &str) -> Engine {

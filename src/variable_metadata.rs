@@ -15,11 +15,11 @@ pub struct VariableMetadata {
 
 impl VariableMetadata {
     pub fn new(start_index: usize, length: usize, size: VariableSize) -> Self {
-        return Self {
+        Self {
             start_index,
             length,
             size,
-        };
+        }
     }
 }
 

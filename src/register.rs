@@ -8,6 +8,7 @@ pub struct Register {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+#[allow(clippy::upper_case_acronyms)]
 pub enum RegisterName {
     EAX,
     AX,
@@ -34,8 +35,9 @@ pub enum RegisterName {
     IP,
     FLAG,
 }
+
 impl RegisterName {
-    pub fn from_str(input: &str) -> Result<Self, ErrorCode> {
+    pub fn from_str_to_reg_name(input: &str) -> Result<Self, ErrorCode> {
         match input {
             "EAX" => Ok(RegisterName::EAX),
             "AX" => Ok(RegisterName::AX),
@@ -69,10 +71,7 @@ impl RegisterName {
     }
 
     pub fn is_valid_name(name: &str) -> bool {
-        match RegisterName::from_str(name) {
-            Ok(_) => true,
-            Err(_) => false,
-        }
+       RegisterName::from_str_to_reg_name(name).is_ok()
     }
 
     pub fn to_index(&self) -> usize {
@@ -106,7 +105,7 @@ impl Register {
         let index = &name.to_index();
         Self {
             value: 0,
-            name: name,
+            name,
             index: *index,
         }
     }
