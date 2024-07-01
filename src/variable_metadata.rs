@@ -10,12 +10,16 @@ pub enum VariableSize {
 pub struct VariableMetadata {
     pub start_index: usize,
     pub length: usize,
-    pub size: VariableSize
+    pub size: VariableSize,
 }
 
 impl VariableMetadata {
     pub fn new(start_index: usize, length: usize, size: VariableSize) -> Self {
-        return Self {start_index, length, size};
+        return Self {
+            start_index,
+            length,
+            size,
+        };
     }
 }
 
@@ -32,14 +36,14 @@ impl VariableSize {
         match self {
             VariableSize::Byte => 1,
             VariableSize::Word => 2,
-            VariableSize::DoubleWord => 4
+            VariableSize::DoubleWord => 4,
         }
     }
     pub fn as_string(&self) -> String {
         match self {
             VariableSize::Byte => "Byte".to_string(),
             VariableSize::Word => "Word".to_string(),
-            VariableSize::DoubleWord => "Double Word".to_string()
+            VariableSize::DoubleWord => "Double Word".to_string(),
         }
     }
 }

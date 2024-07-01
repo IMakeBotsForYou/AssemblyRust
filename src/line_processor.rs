@@ -7,7 +7,7 @@ pub struct LineProcessor {
 
 impl LineProcessor {
     pub fn new(lines: Vec<String>) -> Self {
-        LineProcessor{
+        LineProcessor {
             lines: lines,
             ip: 0,
         }
@@ -26,18 +26,22 @@ impl LineProcessor {
                 continue;
             }
 
-            let instruction = without_comment.split_whitespace().next().unwrap_or("NOP").to_string();
-            
+            let instruction = without_comment
+                .split_whitespace()
+                .next()
+                .unwrap_or("NOP")
+                .to_string();
+
             if instruction == "NOP" {
                 self.ip += 1;
                 continue;
             }
 
             let operands: Vec<String> = without_comment[instruction.len()..]
-                                        .split(',')
-                                        .map(str::trim)
-                                        .map(String::from)
-                                        .collect();
+                .split(',')
+                .map(str::trim)
+                .map(String::from)
+                .collect();
 
             self.ip += 1;
             let mut parts = vec![instruction];
@@ -48,7 +52,7 @@ impl LineProcessor {
         }
         None
     }
-    
+
     pub fn set_ip(&mut self, value: usize) {
         self.ip = value;
     }
@@ -66,5 +70,4 @@ impl LineProcessor {
         self.set_ip(prev_ip); // Restore the instruction pointer to its original state
         res.map(|line| (line, next_ip)) // Return the result along with the updated instruction pointer
     }
-
 }

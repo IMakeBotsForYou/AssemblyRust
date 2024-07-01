@@ -1,11 +1,10 @@
 #[derive(Debug, Clone, Copy)]
 pub enum Flag {
-    Carry = 0b0001,        // Carry Flag
-    Parity = 0b0010,       // Parity Flag
-    Zero = 0b1000,         // Zero Flag
-    Sign = 0b0001_0000,         // Sign Flag
-    Overflow = 0b0010_0000,  // Overflow Flag
-
+    Carry = 0b0001,         // Carry Flag
+    Parity = 0b0010,        // Parity Flag
+    Zero = 0b1000,          // Zero Flag
+    Sign = 0b0001_0000,     // Sign Flag
+    Overflow = 0b0010_0000, // Overflow Flag
 }
 
 impl Flag {

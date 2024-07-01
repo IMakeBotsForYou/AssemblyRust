@@ -1,4 +1,3 @@
-
 use crate::variable_metadata::VariableSize;
 use crate::ErrorCode;
 #[derive(Clone)]
@@ -62,9 +61,10 @@ impl RegisterName {
             "SP" => Ok(RegisterName::SP),
             "IP" => Ok(RegisterName::IP),
             "FLAG" => Ok(RegisterName::FLAG),
-            _ => Err(ErrorCode::InvalidRegister(
-                format!("{} is an invalid register.", input)
-            )),
+            _ => Err(ErrorCode::InvalidRegister(format!(
+                "{} is an invalid register.",
+                input
+            ))),
         }
     }
 
@@ -93,21 +93,22 @@ impl RegisterName {
         match self {
             RegisterName::AL | RegisterName::BL | RegisterName::CL | RegisterName::DL => Ok(false),
             RegisterName::AH | RegisterName::BH | RegisterName::CH | RegisterName::DH => Ok(true),
-            _ => Err(ErrorCode::InvalidRegister(
-                        format!(
-                            "Register {:?} is not a single-byte register, thus it can't have a top-bottom",
-                            self)
-                        )
-                    )
+            _ => Err(ErrorCode::InvalidRegister(format!(
+                "Register {:?} is not a single-byte register, thus it can't have a top-bottom",
+                self
+            ))),
         }
     }
-
 }
 
 impl Register {
     pub fn new(name: RegisterName) -> Self {
         let index = &name.to_index();
-        Self { value: 0, name: name, index: *index }
+        Self {
+            value: 0,
+            name: name,
+            index: *index,
+        }
     }
 
     pub fn get_byte(&self, top: bool) -> u8 {
@@ -124,17 +125,17 @@ impl Register {
         self.value as u16 // X
     }
 
-    pub fn get_dword(&self) -> u32  {
+    pub fn get_dword(&self) -> u32 {
         self.value
     }
 
     pub fn load_byte(&mut self, value: u8, top: bool) {
         // Clear correct byte
-        let mask: u32 = 0xFF << if top {8} else {0};
+        let mask: u32 = 0xFF << if top { 8 } else { 0 };
         self.value &= !mask;
 
         // Set new value at byte
-        let new_value = (value as u32) << if top {8} else {0};  
+        let new_value = (value as u32) << if top { 8 } else { 0 };
         self.value |= new_value;
     }
 
@@ -146,19 +147,35 @@ impl Register {
     pub fn load_dword(&mut self, value: u32) {
         self.value = value;
     }
-
 }
 
 pub fn get_register_size(reg_name: &RegisterName) -> VariableSize {
     match reg_name {
-        RegisterName::AL | RegisterName::BL | RegisterName::CL | RegisterName::DL |
-        RegisterName::AH | RegisterName::BH | RegisterName::CH | RegisterName::DH => VariableSize::Byte,
-        
-        RegisterName::AX | RegisterName::BX | RegisterName::CX | RegisterName::DX |
-        RegisterName::SI | RegisterName::DI | RegisterName::IP | RegisterName::FLAG |
-        RegisterName::BP | RegisterName::SP => VariableSize::Word,
+        RegisterName::AL
+        | RegisterName::BL
+        | RegisterName::CL
+        | RegisterName::DL
+        | RegisterName::AH
+        | RegisterName::BH
+        | RegisterName::CH
+        | RegisterName::DH => VariableSize::Byte,
 
-        RegisterName::EAX | RegisterName::EBX | RegisterName::ECX | RegisterName::EDX |
-        RegisterName::ESI | RegisterName::EDI => VariableSize::DoubleWord
+        RegisterName::AX
+        | RegisterName::BX
+        | RegisterName::CX
+        | RegisterName::DX
+        | RegisterName::SI
+        | RegisterName::DI
+        | RegisterName::IP
+        | RegisterName::FLAG
+        | RegisterName::BP
+        | RegisterName::SP => VariableSize::Word,
+
+        RegisterName::EAX
+        | RegisterName::EBX
+        | RegisterName::ECX
+        | RegisterName::EDX
+        | RegisterName::ESI
+        | RegisterName::EDI => VariableSize::DoubleWord,
     }
 }

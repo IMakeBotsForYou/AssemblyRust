@@ -1,5 +1,5 @@
 pub enum Instruction {
-    Mov,   
+    Mov,
     /* Move data
     Syntax
     mov <reg>, <reg>
@@ -22,7 +22,7 @@ pub enum Instruction {
     pop [<mem>]
     */
     Lea,
-    /* 
+    /*
     Syntax
     lea <reg>, [<mem>]
     */
@@ -319,7 +319,6 @@ Syntax:
     idiv <var>
     idiv <const>".to_string()
             },
-            
             Instruction::And => {
                 "The 'and' instruction performs a bitwise AND operation.
 Syntax:

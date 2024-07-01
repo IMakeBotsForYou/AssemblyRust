@@ -3,15 +3,11 @@
 // use std::io::BufReader;
 // use std::io::BufRead;
 
-use std::{
-    io::{
-        self,
-        BufRead,
-        BufReader
-    },
-    fs::File
-};
 use crate::Engine;
+use std::{
+    fs::File,
+    io::{self, BufRead, BufReader},
+};
 
 pub fn read_lines_from_file(filename: &str) -> io::Result<Vec<String>> {
     let file = File::open(filename)?;
@@ -22,21 +18,21 @@ pub fn read_lines_from_file(filename: &str) -> io::Result<Vec<String>> {
 pub fn parse_string_to_usize(value: &str) -> Option<u32> {
     let parsed_value = if value.ends_with("h") {
         // Hexadecimal format
-        match i32::from_str_radix(&value[..value.len()-1], 16).ok() {
+        match i32::from_str_radix(&value[..value.len() - 1], 16).ok() {
             Some(v) => Some(v as u32),
-            None => None
+            None => None,
         }
     } else if value.ends_with("b") {
         // Binary format
-        match i32::from_str_radix(&value[..value.len()-1], 2).ok() {
+        match i32::from_str_radix(&value[..value.len() - 1], 2).ok() {
             Some(v) => Some(v as u32),
-            None => None
+            None => None,
         }
     } else {
         // Decimal format
         match i32::from_str_radix(&value, 10).ok() {
             Some(v) => Some(v as u32),
-            None => None
+            None => None,
         }
     };
     parsed_value
@@ -56,7 +52,7 @@ pub fn execute_engine(assembly: &mut Engine, verbose: bool) {
         Err(e) => {
             let ip = assembly.lines.get_ip();
             panic!("Errored during execution.\n{}\nLINE: {}", e, ip);
-        },
+        }
     }
 }
 
