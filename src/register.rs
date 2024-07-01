@@ -71,7 +71,7 @@ impl RegisterName {
     }
 
     pub fn is_valid_name(name: &str) -> bool {
-       RegisterName::from_str_to_reg_name(name).is_ok()
+        RegisterName::from_str_to_reg_name(name).is_ok()
     }
 
     pub fn to_index(&self) -> usize {

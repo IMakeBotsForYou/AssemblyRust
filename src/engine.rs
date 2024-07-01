@@ -57,7 +57,7 @@ fn pause() {
 
 fn back_to_str(vec: &[String]) -> String {
     let mut ret = String::new();
-    
+
     ret.push_str(&format!("{} ", vec[0]));
 
     for item in vec.iter().skip(1) {
@@ -323,7 +323,9 @@ impl Engine {
                             )));
                         }
                         if in_proc {
-                            return Err(ErrorCode::InvalidOpcode("Cannot start new proc while in another.".to_string()));
+                            return Err(ErrorCode::InvalidOpcode(
+                                "Cannot start new proc while in another.".to_string(),
+                            ));
                         }
                         in_proc = true;
                         current_proc_name.clone_from(proc_name);
@@ -337,7 +339,9 @@ impl Engine {
                             )));
                         }
                         if !in_proc {
-                            return Err(ErrorCode::InvalidOpcode("Cannot end proc outside of a proc.".to_string()));
+                            return Err(ErrorCode::InvalidOpcode(
+                                "Cannot end proc outside of a proc.".to_string(),
+                            ));
                         }
                         in_proc = false;
                         let current_proc_end_ip =
@@ -503,9 +507,9 @@ impl Engine {
                                 VariableSize::Word => self
                                     .memory_manager
                                     .set_word(parsed_address, current as u16)?,
-                                VariableSize::DoubleWord => self
-                                    .memory_manager
-                                    .set_dword(parsed_address, current)?,
+                                VariableSize::DoubleWord => {
+                                    self.memory_manager.set_dword(parsed_address, current)?
+                                }
                             };
                         }
                         Err(error) => return Err(error),
@@ -590,7 +594,9 @@ impl Engine {
                 // OP       MEM               REG/CONST
                 ["mov", memory_address, parameter] => {
                     if self.memory_manager.is_memory_operand(parameter) {
-                        return Err(ErrorCode::InvalidValue("Direct memory transfer is not supported.".to_string()));
+                        return Err(ErrorCode::InvalidValue(
+                            "Direct memory transfer is not supported.".to_string(),
+                        ));
                     }
                     let (size_option_src, _) = self.get_argument_size(parameter);
 
@@ -638,9 +644,9 @@ impl Engine {
                                 VariableSize::Word => self
                                     .memory_manager
                                     .set_word(parsed_address, constant as u16)?,
-                                VariableSize::DoubleWord => self
-                                    .memory_manager
-                                    .set_dword(parsed_address, constant)?,
+                                VariableSize::DoubleWord => {
+                                    self.memory_manager.set_dword(parsed_address, constant)?
+                                }
                             };
                         }
                         // Destination is not valid address
@@ -706,7 +712,9 @@ impl Engine {
                     let is_immediate: bool = parse_string_to_usize(parameter).is_some();
 
                     if self.memory_manager.is_memory_operand(parameter) {
-                        return Err(ErrorCode::InvalidValue("Direct memory transfer is not supported.".to_string()));
+                        return Err(ErrorCode::InvalidValue(
+                            "Direct memory transfer is not supported.".to_string(),
+                        ));
                     }
                     // Throwing away the second value because we don't need to trim it.
                     // The second parameter cannot be a memory operand anyway.
@@ -1166,9 +1174,7 @@ impl Engine {
                                         {
                                             print!("{0}", src_value_char);
                                         } else {
-                                            print!(
-                                                "{: >width$}", src_value, width = 4
-                                            );
+                                            print!("{: >width$}", src_value, width = 4);
                                         }
                                     } else {
                                         print!("{: >width$}", src_value, width = 4);
@@ -1256,7 +1262,7 @@ impl Engine {
                         let _ = skip_lines(lines_to_skip);
                     }
                     self.memory_manager
-                            .save_variable(variable_name.to_string(), &bytes, size)?
+                        .save_variable(variable_name.to_string(), &bytes, size)?
                 }
                 //////// JUMPS ////////////
                 ["jmp", label] => {
@@ -1391,13 +1397,14 @@ impl Engine {
 
                     let second_is_immediate: bool = parse_string_to_usize(second_operand).is_some();
 
-                    if (second_is_immediate && first_operand_size.value() < second_operand_size.value()) 
-                        || (!second_is_immediate && first_operand_size != second_operand_size) {
-                        
+                    if (second_is_immediate
+                        && first_operand_size.value() < second_operand_size.value())
+                        || (!second_is_immediate && first_operand_size != second_operand_size)
+                    {
                         return Err(ErrorCode::InvalidValue(
                             format!(
                                 "Target memory pointer size ({}) bytes doesn't match second parameter size ({}) bytes",
-                                first_operand_size.value(), 
+                                first_operand_size.value(),
                                 second_operand_size.value()
                             )
                         ));

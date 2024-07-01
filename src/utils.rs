@@ -29,7 +29,7 @@ pub fn parse_string_to_usize(value: &str) -> Option<u32> {
 
     match i32::from_str_radix(number, radix) {
         Ok(v) => Some(v as u32),
-        Err(_) => None
+        Err(_) => None,
     }
 }
 

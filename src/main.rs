@@ -29,9 +29,9 @@ use crate::utils::{execute_engine, initialize_engine, verify_memory};
 fn main() -> io::Result<()> {
     // Initialize the engine
 
-    let file_path = std::env::args().nth(1)
-        .unwrap_or("code.asm".to_string());
-    let _debug = std::env::args().nth(2)
+    let file_path = std::env::args().nth(1).unwrap_or("code.asm".to_string());
+    let _debug = std::env::args()
+        .nth(2)
         .unwrap_or("false".to_string())
         .to_lowercase();
     let debug = _debug == *"true" || _debug == *"t";

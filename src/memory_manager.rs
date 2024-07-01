@@ -261,13 +261,14 @@ impl MemoryManager {
                 ))?;
 
                 // Get the index value from registers or as a direct value
-                let index_value = if let Ok(register_name) =RegisterName::from_str_to_reg_name(index_part) {
-                    get_register_value(registers, &register_name) as usize
-                } else {
-                    parse_string_to_usize(index_part)
-                        .ok_or(ErrorCode::InvalidRegister(index_part.to_string()))?
-                        as usize
-                };
+                let index_value =
+                    if let Ok(register_name) = RegisterName::from_str_to_reg_name(index_part) {
+                        get_register_value(registers, &register_name) as usize
+                    } else {
+                        parse_string_to_usize(index_part)
+                            .ok_or(ErrorCode::InvalidRegister(index_part.to_string()))?
+                            as usize
+                    };
 
                 // Parse the scale value
                 let scale_value = parse_string_to_usize(scale_part).ok_or(
@@ -332,7 +333,7 @@ impl MemoryManager {
             }
 
         // Handle register values based on is_negative flag
-        } else if let Ok(register_name) =RegisterName::from_str_to_reg_name(part) {
+        } else if let Ok(register_name) = RegisterName::from_str_to_reg_name(part) {
             Some(if is_negative {
                 -(get_register_value(registers, &register_name) as isize)
             } else {
@@ -340,7 +341,9 @@ impl MemoryManager {
             })
 
         // Handle labels directly
-        } else { self.labels.get(part).map(|v| *v as isize) }
+        } else {
+            self.labels.get(part).map(|v| *v as isize)
+        }
     }
 
     pub fn set_byte(&mut self, index: usize, value: u8) -> Result<(), ErrorCode> {

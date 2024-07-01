@@ -7,10 +7,7 @@ pub struct LineProcessor {
 
 impl LineProcessor {
     pub fn new(lines: Vec<String>) -> Self {
-        LineProcessor {
-            lines,
-            ip: 0,
-        }
+        LineProcessor { lines, ip: 0 }
     }
 
     pub fn next_line(&mut self) -> Option<Vec<String>> {
