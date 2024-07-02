@@ -399,7 +399,7 @@ impl Engine {
             match line_str.as_slice() {
                 // INC DEC
                 [op @ ("inc" | "dec"), register] if RegisterName::is_valid_name(register) => {
-                    let register = &RegisterName::from_str_to_reg_name(register).unwrap();
+                    let register = &RegisterName::from_str_to_reg_name(register).expect("The register should have been already checked to be a valid RegisterName.");
                     let inc = *op == "inc";
                     let (result, overflowed) = match get_register_size(register) {
                         VariableSize::Byte => {
@@ -536,7 +536,7 @@ impl Engine {
                     if RegisterName::is_valid_name(register)
                         && self.memory_manager.is_memory_operand(memory_address) =>
                 {
-                    let register = &RegisterName::from_str_to_reg_name(register).unwrap();
+                    let register = &RegisterName::from_str_to_reg_name(register).expect("The register should have been already checked to be a valid RegisterName.");
                     match self.memory_manager.calculate_effective_address(
                         memory_address,
                         &self.registers,
@@ -668,7 +668,7 @@ impl Engine {
                     if RegisterName::is_valid_name(register) =>
                 {
                     // Parse the register name
-                    let register = &RegisterName::from_str_to_reg_name(register).unwrap();
+                    let register = &RegisterName::from_str_to_reg_name(register).expect("The register should have been already checked to be a valid RegisterName.");
 
                     // Determine if the operation is addition or subtraction
                     let is_addition = *op == "add";
@@ -870,27 +870,21 @@ impl Engine {
                 [op @ ("shr" | "shl"), register, parameter]
                     if RegisterName::is_valid_name(register) =>
                 {
-                    // Determine if the shift amount is an immediate value or 'CL'
-                    let is_immediate: bool = parse_string_to_usize(parameter).is_some();
-
-                    // Get the register name from the string
-                    let register = &RegisterName::from_str_to_reg_name(register).unwrap();
-
                     // Determine if the shift amount is 'CL' (using the count in CL register) or an immediate value
-                    let is_cl = *parameter == "CL";
-                    let shift_amount = if is_cl {
+                    let shift_amount = if *parameter == "CL" {
                         // Use the value from CL register if shift count is 'CL'
                         self.get_register_value(&RegisterName::CL) as u8
-                    } else if is_immediate {
-                        // Parse the immediate value
-                        parse_string_to_usize(parameter).unwrap() as u8
+                    } else if let Some(result) = parse_string_to_usize(parameter) { // Parse the immediate value
+                        result as u8
                     } else {
-                        // Error: Parameter must be an immediate value or 'CL'
                         return Err(ErrorCode::InvalidValue(format!(
                             "Parameter {} can only be an immediate value, or 'CL'",
                             parameter
                         )));
                     };
+
+                    // Get the register name from the string
+                    let register = &RegisterName::from_str_to_reg_name(register).expect("The register should have been already checked to be a valid RegisterName.");
 
                     // Get the size of the register operand
                     let register_size = get_register_size(register);
@@ -972,19 +966,13 @@ impl Engine {
                 }
                 // Handle SHR and SHL instructions with memory address operand
                 [op @ ("shr" | "shl"), memory_address, parameter] => {
-                    // Determine if the shift amount is an immediate value or 'CL'
-                    let is_immediate: bool = parse_string_to_usize(parameter).is_some();
-
-                    // Determine if the shift count is 'CL' or an immediate value
-                    let is_cl = *parameter == "CL";
-                    let shift_amount = if is_cl {
+                    // Determine if the shift amount is 'CL' (using the count in CL register) or an immediate value
+                    let shift_amount = if *parameter == "CL" {
                         // Use the value from CL register if shift count is 'CL'
                         self.get_register_value(&RegisterName::CL) as u8
-                    } else if is_immediate {
-                        // Parse the immediate value
-                        parse_string_to_usize(parameter).unwrap() as u8
+                    } else if let Some(result) = parse_string_to_usize(parameter) { // Parse the immediate value
+                        result as u8
                     } else {
-                        // Error: Parameter must be an immediate value or 'CL'
                         return Err(ErrorCode::InvalidValue(format!(
                             "Parameter {} can only be an immediate value, or 'CL'",
                             parameter
