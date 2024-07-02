@@ -570,7 +570,7 @@ impl Engine {
                 // MOV Instructions
                 // OP    REG      MEM/REG/CONST
                 ["mov", reg, parameter] if RegisterName::is_valid_name(reg) => {
-                    let register = &RegisterName::from_str_to_reg_name(reg).unwrap();
+                    let register = &RegisterName::from_str_to_reg_name(reg).expect("The register should have been already checked to be a valid RegisterName.");
                     let (size_option, memory_address) = self.get_argument_size(parameter);
                     let (constant, assumed_size) =
                         self.parse_value_from_parameter(memory_address, size_option)?;
