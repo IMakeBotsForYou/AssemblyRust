@@ -409,7 +409,7 @@ pub fn get_register_value(registers: &[Register; 10], reg_name: &RegisterName) -
 
     match get_register_size(reg_name) {
         VariableSize::Byte => {
-            if reg_name.is_top().unwrap() {
+            if reg_name.is_top().expect("Register should have been verified to be VariableSize::Byte by match arm.") {
                 (value & 0x0000FF00) >> 8
             } else {
                 value & 0x000000FF
