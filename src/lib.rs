@@ -8,8 +8,8 @@ pub mod register;
 pub mod status;
 pub mod utils;
 pub mod variable_metadata;
-#[allow(unused_imports)] // This is stupid but it keeps throwing warnings
-use crate::{
+
+pub use crate::{
     error_code::ErrorCode,
     register::RegisterName,
     utils::{execute_engine, initialize_engine, verify_memory},
@@ -22,7 +22,7 @@ mod tests {
     use super::*;
     #[test]
     fn add_sub() {
-        let mut assembly = initialize_engine("./src/unit_tests/add_sub.txt");
+        let mut assembly = initialize_engine("./tests/add_sub.txt");
         execute_engine(&mut assembly, false);
         assert!(assembly.registers[RegisterName::AX.to_index()].get_word() == 512); // AX
         assert!(assembly.registers[RegisterName::BX.to_index()].get_word() == 513); // BX
@@ -32,7 +32,7 @@ mod tests {
 
     #[test]
     fn mul_div() {
-        let mut assembly = initialize_engine("./src/unit_tests/mul_div.txt");
+        let mut assembly = initialize_engine("./tests/mul_div.txt");
         execute_engine(&mut assembly, false);
         assert!(assembly.registers[RegisterName::AX.to_index()].get_word() == 3); // AX
         assert!(assembly.registers[RegisterName::BX.to_index()].get_word() == 3); // BX
@@ -45,7 +45,7 @@ mod tests {
 
     #[test]
     fn imul_idiv() {
-        let mut assembly = initialize_engine("./src/unit_tests/imul_idiv.txt");
+        let mut assembly = initialize_engine("./tests/imul_idiv.txt");
         execute_engine(&mut assembly, false);
         assert!(assembly.registers[RegisterName::AX.to_index()].get_word() as i16 == -5); // AX
         assert!(assembly.registers[RegisterName::BX.to_index()].get_word() as i16 == -5); // BX
@@ -56,7 +56,7 @@ mod tests {
 
     #[test]
     fn shr_shl() {
-        let mut assembly = initialize_engine("./src/unit_tests/shr_shl.txt");
+        let mut assembly = initialize_engine("./tests/shr_shl.txt");
         execute_engine(&mut assembly, false);
 
         let expected_memory: Vec<u8> = vec![4, 0, 0, 0];
@@ -67,7 +67,7 @@ mod tests {
 
     #[test]
     fn fibonacci() {
-        let mut assembly = initialize_engine("./src/code_examples/fibonacci.txt");
+        let mut assembly = initialize_engine("./examples/fibonacci.txt");
         execute_engine(&mut assembly, false);
         assert!(assembly.registers[RegisterName::AX.to_index()].get_word() == 89);
         // AX
@@ -75,7 +75,7 @@ mod tests {
 
     #[test]
     fn memory_char_manipulation() {
-        let mut assembly = initialize_engine("./src/code_examples/char_manipulation.txt");
+        let mut assembly = initialize_engine("./examples/char_manipulation.txt");
         execute_engine(&mut assembly, false);
 
         let chars: Vec<u8> = assembly.get_memory(14);
@@ -85,7 +85,7 @@ mod tests {
 
     #[test]
     fn bubble_sort() {
-        let mut assembly = initialize_engine("./src/code_examples/bubble_sort.txt");
+        let mut assembly = initialize_engine("./examples/bubble_sort.txt");
         execute_engine(&mut assembly, false);
 
         let expected_sorted_array: Vec<u8> = vec![1, 1, 2, 4, 4, 8, 9, 37, 255];
@@ -94,7 +94,7 @@ mod tests {
 
     #[test]
     fn find_factors() {
-        let mut assembly = initialize_engine("./src/code_examples/find_factors.txt");
+        let mut assembly = initialize_engine("./examples/find_factors.txt");
         execute_engine(&mut assembly, false);
         //Double words         [         1], [       2], [       3], [       17]
         let expected_memory: Vec<u8> = vec![0, 0, 0, 1, 0, 0, 0, 2, 0, 0, 0, 3, 0, 0, 0, 17];

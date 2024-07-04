@@ -1,46 +1,35 @@
-use assembly::engine::Engine; // Adjust the path based on your crate name and module structure
-use assembly::error_code::ErrorCode;
+//! CLI tool for Assembler
+
 use assembly::io;
 
-#[allow(dead_code)]
-mod engine;
-#[allow(dead_code)]
-mod error_code;
-#[allow(dead_code)]
-mod flag;
-#[allow(dead_code)]
-mod instruction;
-#[allow(dead_code)]
-mod line_processor;
-#[allow(dead_code)]
-mod memory_manager;
-#[allow(dead_code)]
-mod register;
-#[allow(dead_code)]
-mod status;
-#[allow(dead_code)]
-mod utils;
-#[allow(dead_code)]
-mod variable_metadata;
-
-#[allow(unused_imports)]
-use crate::utils::{execute_engine, initialize_engine, verify_memory};
+use assembly::{execute_engine, initialize_engine};
 
 fn main() -> io::Result<()> {
+    let mut args = std::env::args();
+    args.next().unwrap();
     // Initialize the engine
 
-    let file_path = std::env::args().nth(1).unwrap_or("code.asm".to_string());
-    let _debug = std::env::args()
-        .nth(2)
-        .unwrap_or("false".to_string())
-        .to_lowercase();
-    let debug = _debug == *"true" || _debug == *"t";
+    // Arg 1 is file_path
+    let file_path = match args.next() {
+        Some(file_path) => file_path,
+        None => {
+            // Not sure what to do here and if it was intended but now I guess there is a spot to write any warnings you`d like
+            println!("It is best to provide a file path going to default");
+            String::from("./examples/code.asm")
+        }
+    };
 
-    let mut assembly = initialize_engine(&file_path);
-    execute_engine(&mut assembly, debug);
+    // Arg 2 is debug
+    let debug = match args.next() {
+        Some(input) => ["true", "t"].contains(&input.to_lowercase().as_str()),
+        None => false,
+    };
+
+    let mut engine = initialize_engine(&file_path);
+    execute_engine(&mut engine, debug);
     if !debug {
         // already printing every time.
-        println!("{assembly}");
+        println!("{}", engine);
     }
     Ok(())
 }
