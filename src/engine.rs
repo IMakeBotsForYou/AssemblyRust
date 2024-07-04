@@ -144,7 +144,7 @@ impl Engine {
         let value = reg.get_dword();
         match get_register_size(reg_name) {
             VariableSize::Byte => {
-                if reg_name.is_top().unwrap() {
+                if reg_name.is_top().expect("Register should have been verified to be VariableSize::Byte by match arm.") {
                     (value & 0x0000FF00) >> 8
                 } else {
                     value & 0x000000FF
@@ -368,10 +368,10 @@ impl Engine {
             self.lines.update_ip_register(&mut self.registers[ip_index]);
             let ip: usize = self.get_register_value(&RegisterName::IP) as usize;
 
-            if line_option.is_none() {
+            let Some(line) = line_option else {
                 break;
-            }
-            let line = line_option.unwrap();
+            };
+            
             if debug {
                 let _ = clear_screen(14);
                 if let Some((prev_ip, prev_line)) = buffer {
@@ -399,7 +399,7 @@ impl Engine {
             match line_str.as_slice() {
                 // INC DEC
                 [op @ ("inc" | "dec"), register] if RegisterName::is_valid_name(register) => {
-                    let register = &RegisterName::from_str_to_reg_name(register).unwrap();
+                    let register = &RegisterName::from_str_to_reg_name(register).expect("The register should have been already checked to be a valid RegisterName.");
                     let inc = *op == "inc";
                     let (result, overflowed) = match get_register_size(register) {
                         VariableSize::Byte => {
@@ -536,7 +536,7 @@ impl Engine {
                     if RegisterName::is_valid_name(register)
                         && self.memory_manager.is_memory_operand(memory_address) =>
                 {
-                    let register = &RegisterName::from_str_to_reg_name(register).unwrap();
+                    let register = &RegisterName::from_str_to_reg_name(register).expect("The register should have been already checked to be a valid RegisterName.");
                     match self.memory_manager.calculate_effective_address(
                         memory_address,
                         &self.registers,
@@ -570,7 +570,7 @@ impl Engine {
                 // MOV Instructions
                 // OP    REG      MEM/REG/CONST
                 ["mov", reg, parameter] if RegisterName::is_valid_name(reg) => {
-                    let register = &RegisterName::from_str_to_reg_name(reg).unwrap();
+                    let register = &RegisterName::from_str_to_reg_name(reg).expect("The register should have been already checked to be a valid RegisterName.");
                     let (size_option, memory_address) = self.get_argument_size(parameter);
                     let (constant, assumed_size) =
                         self.parse_value_from_parameter(memory_address, size_option)?;
@@ -668,7 +668,7 @@ impl Engine {
                     if RegisterName::is_valid_name(register) =>
                 {
                     // Parse the register name
-                    let register = &RegisterName::from_str_to_reg_name(register).unwrap();
+                    let register = &RegisterName::from_str_to_reg_name(register).expect("The register should have been already checked to be a valid RegisterName.");
 
                     // Determine if the operation is addition or subtraction
                     let is_addition = *op == "add";
@@ -870,27 +870,21 @@ impl Engine {
                 [op @ ("shr" | "shl"), register, parameter]
                     if RegisterName::is_valid_name(register) =>
                 {
-                    // Determine if the shift amount is an immediate value or 'CL'
-                    let is_immediate: bool = parse_string_to_usize(parameter).is_some();
-
-                    // Get the register name from the string
-                    let register = &RegisterName::from_str_to_reg_name(register).unwrap();
-
                     // Determine if the shift amount is 'CL' (using the count in CL register) or an immediate value
-                    let is_cl = *parameter == "CL";
-                    let shift_amount = if is_cl {
+                    let shift_amount = if *parameter == "CL" {
                         // Use the value from CL register if shift count is 'CL'
                         self.get_register_value(&RegisterName::CL) as u8
-                    } else if is_immediate {
-                        // Parse the immediate value
-                        parse_string_to_usize(parameter).unwrap() as u8
+                    } else if let Some(result) = parse_string_to_usize(parameter) { // Parse the immediate value
+                        result as u8
                     } else {
-                        // Error: Parameter must be an immediate value or 'CL'
                         return Err(ErrorCode::InvalidValue(format!(
                             "Parameter {} can only be an immediate value, or 'CL'",
                             parameter
                         )));
                     };
+
+                    // Get the register name from the string
+                    let register = &RegisterName::from_str_to_reg_name(register).expect("The register should have been already checked to be a valid RegisterName.");
 
                     // Get the size of the register operand
                     let register_size = get_register_size(register);
@@ -908,8 +902,7 @@ impl Engine {
                                     value_masked
                                 );
                             }
-                            // Confirmed to be byte sized by earlier if/match
-                            let top = register.is_top().unwrap();
+                            let top = register.is_top().expect("Register should have been verified to be VariableSize::Byte by match arm.");
                             let current_value: u8 =
                                 self.registers[register.to_index()].get_byte(top);
                             let carry_flag = (current_value >> (value_masked - 1)) & 1; // Last bit shifted out
@@ -973,19 +966,13 @@ impl Engine {
                 }
                 // Handle SHR and SHL instructions with memory address operand
                 [op @ ("shr" | "shl"), memory_address, parameter] => {
-                    // Determine if the shift amount is an immediate value or 'CL'
-                    let is_immediate: bool = parse_string_to_usize(parameter).is_some();
-
-                    // Determine if the shift count is 'CL' or an immediate value
-                    let is_cl = *parameter == "CL";
-                    let shift_amount = if is_cl {
+                    // Determine if the shift amount is 'CL' (using the count in CL register) or an immediate value
+                    let shift_amount = if *parameter == "CL" {
                         // Use the value from CL register if shift count is 'CL'
                         self.get_register_value(&RegisterName::CL) as u8
-                    } else if is_immediate {
-                        // Parse the immediate value
-                        parse_string_to_usize(parameter).unwrap() as u8
+                    } else if let Some(result) = parse_string_to_usize(parameter) { // Parse the immediate value
+                        result as u8
                     } else {
-                        // Error: Parameter must be an immediate value or 'CL'
                         return Err(ErrorCode::InvalidValue(format!(
                             "Parameter {} can only be an immediate value, or 'CL'",
                             parameter
@@ -1624,8 +1611,8 @@ impl Engine {
                         "Value {constant} cannot fit into {:?}",
                         dest
                     )));
-                } // Confirmed to be byte sized by earlier if/match
-                self.registers[index].load_byte(constant as u8, dest.is_top().unwrap());
+                }
+                self.registers[index].load_byte(constant as u8, dest.is_top().expect("Register should have been verified to be VariableSize::Byte by match arm."));
                 VariableSize::Byte
             }
             VariableSize::Word => {
@@ -1658,8 +1645,7 @@ impl Engine {
 
         let (result, overflowed) = match size {
             VariableSize::Byte => {
-                //Confirmed to be byte sized by earlier if/match
-                let src_value = self.registers[index].get_byte(src.is_top().unwrap());
+                let src_value = self.registers[index].get_byte(src.is_top().expect("Register should have been verified to be VariableSize::Byte by match arm."));
                 let dest_value = self.memory_manager.get_byte(memory_address)?;
                 let (result, overflowed) = if is_addition {
                     dest_value.overflowing_add(src_value)
@@ -1719,8 +1705,8 @@ impl Engine {
                     dest_value.overflowing_add(constant as u8)
                 } else {
                     dest_value.overflowing_sub(constant as u8)
-                }; //Confirmed to be byte sized by earlier if/match
-                self.registers[index].load_byte(result, dest.is_top().unwrap());
+                };
+                self.registers[index].load_byte(result, dest.is_top().expect("Register should have been verified to be VariableSize::Byte by match arm."));
                 self.set_flags(result as usize, VariableSize::Byte, overflowed);
             }
             VariableSize::Word => {
@@ -1771,7 +1757,7 @@ impl Engine {
                     )));
                 } // Confirmed to be byte sized by earlier if/match
                 self.registers[index]
-                    .load_byte(value.try_into().unwrap(), register_name.is_top().unwrap());
+                    .load_byte(value.try_into().unwrap(), register_name.is_top().expect("Register should have been verified to be VariableSize::Byte by match arm."));
             }
             VariableSize::Word => {
                 if value > u16::MAX as u32 {
